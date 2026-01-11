@@ -1,14 +1,15 @@
 'use client';
 
-import React, { useState, useEffect, useMemo, memo } from 'react';
+import React, { useState, useEffect, useMemo, useRef, useCallback, memo } from 'react';
 import { motion } from 'framer-motion';
 import { RefreshCcw, Filter, Activity, AlertTriangle, CheckCircle2, TrendingUp, TrendingDown, Users, Layers, Sun, Moon, Target, User, Globe, Trophy, Sparkles, Zap } from 'lucide-react';
 import { clsx } from 'clsx';
+import Image from 'next/image';
 import { ManagementData, BudgetData, MonthlyTotalData } from '@/lib/types';
 
 import { MultiSelect } from './MultiSelect';
 import {
-    XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
+    XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
     AreaChart, Area, ScatterChart, Scatter, ZAxis, Cell, BarChart, Bar
 } from 'recharts';
 
@@ -440,14 +441,16 @@ export default function Dashboard() {
 
     // -- Filter Logic (Monthly KPI) --
     const filteredMonthlyData = useMemo(() => monthlyData.filter(item => {
-        const label = formatMonthDisplay(item.month);
-        const matchMonth = monthlyFilterMonth.length === 0 || monthlyFilterMonth.includes(label);
+        const monthLabel = formatMonthDisplay(item.month);
+        const itemStatus = calculateKpiStatus(item);
+        const matchMonth = monthlyFilterMonth.length === 0 || monthlyFilterMonth.includes(monthLabel);
         const matchPM = monthlyFilterPM.length === 0 || monthlyFilterPM.includes(item.pm);
         const matchAccount = monthlyFilterAccount.length === 0 || monthlyFilterAccount.includes(item.accountName);
         const matchClient = monthlyFilterClient.length === 0 || monthlyFilterClient.includes(item.clientAccount);
         const matchObjective = monthlyFilterObjective.length === 0 || monthlyFilterObjective.includes(item.objective);
-        const matchStatus = monthlyFilterStatus.length === 0 || monthlyFilterStatus.includes(calculateKpiStatus(item));
-        return matchMonth && matchPM && matchAccount && matchClient && matchObjective && matchStatus;
+        const matchStatus = monthlyFilterStatus.length === 0 || monthlyFilterStatus.includes(itemStatus);
+        const isNotExcluded = !EXCLUDED_PMS.includes(item.pm);
+        return matchMonth && matchPM && matchAccount && matchClient && matchObjective && matchStatus && isNotExcluded;
     }).sort((a, b) => {
         let valA: any = (a as any)[monthlySortField] || '';
         let valB: any = (b as any)[monthlySortField] || '';
@@ -650,7 +653,6 @@ export default function Dashboard() {
         audienceData.forEach(row => {
             const cidKey = (row.cid || '').replace(/\D/g, '');
             const pm = cidToPm[cidKey] || 'Unknown';
-
             if (EXCLUDED_PMS.includes(pm)) return;
 
             // Filter by PM if selected
@@ -766,7 +768,6 @@ export default function Dashboard() {
         campaignAuditData.forEach(row => {
             const cidKey = (row.cid || '').replace(/\D/g, '');
             const pm = cidToPm[cidKey] || 'Unknown';
-
             if (EXCLUDED_PMS.includes(pm)) return;
 
             // Filter by PM if selected
@@ -946,6 +947,7 @@ export default function Dashboard() {
     }, [filteredDailyData, pmSortField, pmSortOrder]);
 
     const dailyTeamStats = useMemo(() => {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const teamMap: Record<string, any> = {};
         filteredDailyData.forEach(row => {
             const t = row.team || 'Unknown';
@@ -957,14 +959,17 @@ export default function Dashboard() {
             else if (status === 'Low') teamMap[t].low++;
             else teamMap[t].onTrack++;
         });
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         return Object.values(teamMap).map((team: any) => ({
             ...team,
             criticalPct: team.total > 0 ? (team.critical / team.total) * 100 : 0,
             lowPct: team.total > 0 ? (team.low / team.total) * 100 : 0,
             onTrackPct: team.total > 0 ? (team.onTrack / team.total) * 100 : 0
         })).sort((a, b) => {
-            let valA = (a as any)[teamSortField];
-            let valB = (b as any)[teamSortField];
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const valA = (a as any)[teamSortField];
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const valB = (b as any)[teamSortField];
             if (typeof valA === 'string') return teamSortOrder === 'asc' ? valA.localeCompare(valB) : valB.localeCompare(valA);
             return teamSortOrder === 'asc' ? valA - valB : valB - valA;
         });
@@ -974,6 +979,7 @@ export default function Dashboard() {
         const selectedMonths = portfolioFilterMonth.length > 0 ? portfolioFilterMonth : [monthOptions[monthOptions.length - 1] || ''];
         if (selectedMonths.length === 0 || !selectedMonths[0]) return [];
 
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const pmStats: Record<string, any> = {};
 
         monthlyData.forEach(item => {
@@ -1019,6 +1025,7 @@ export default function Dashboard() {
 
         const numMonths = selectedMonths.length;
 
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         return Object.values(pmStats).map((s: any) => ({
             ...s,
             // Average counts across months
@@ -1118,7 +1125,7 @@ export default function Dashboard() {
     const uniquePMsCount = useMemo(() => new Set(filteredData.map(d => d.pm).filter(Boolean)).size, [filteredData]);
     const uniqueTeamsCount = useMemo(() => new Set(filteredData.map(d => d.team).filter(Boolean)).size, [filteredData]);
 
-    const getStatsForLabels = (labels: string[]) => {
+    const getStatsForLabels = useCallback((labels: string[]) => {
         const mData = monthlyData.filter(i => {
             const label = formatMonthDisplay(i.month);
             const matchMonth = labels.includes(label);
@@ -1135,22 +1142,22 @@ export default function Dashboard() {
         const onTrack = mData.filter(i => calculateKpiStatus(i) === 'On Track').length;
         const total = mData.length || 1;
         return { projects, pms, critical, low, onTrack, total };
-    };
+    }, [monthlyData, monthlyFilterPM, monthlyFilterAccount, monthlyFilterClient, monthlyFilterObjective]);
 
     // Calculate Previous Period for Comparison
-    const getPrevPeriodLabels = (labels: string[]) => {
+    const getPrevPeriodLabels = useCallback((labels: string[]) => {
         const sortedAll = [...monthOptions].sort((a, b) => new Date(a).getTime() - new Date(b).getTime());
         const minIdx = Math.min(...labels.map(l => sortedAll.indexOf(l)).filter(idx => idx !== -1));
-        if (minIdx === Infinity || minIdx === 0) return 0;
+        if (minIdx === Infinity || minIdx === 0) return null;
 
         const count = labels.length;
         const start = Math.max(0, minIdx - count);
         return sortedAll.slice(start, minIdx);
-    };
+    }, [monthOptions]);
 
-    const currStats = useMemo(() => getStatsForLabels(selectedMonthLabels), [selectedMonthLabels, monthlyData, monthlyFilterPM, monthlyFilterAccount, monthlyFilterClient, monthlyFilterObjective]);
-    const prevPeriodLabels = useMemo(() => getPrevPeriodLabels(selectedMonthLabels), [selectedMonthLabels, monthOptions]);
-    const prevStats = useMemo(() => prevPeriodLabels ? getStatsForLabels(prevPeriodLabels) : null, [prevPeriodLabels, monthlyData, monthlyFilterPM, monthlyFilterAccount, monthlyFilterClient, monthlyFilterObjective]);
+    const currStats = useMemo(() => getStatsForLabels(selectedMonthLabels), [selectedMonthLabels, getStatsForLabels]);
+    const prevPeriodLabels = useMemo(() => getPrevPeriodLabels(selectedMonthLabels), [selectedMonthLabels, getPrevPeriodLabels]);
+    const prevStats = useMemo(() => prevPeriodLabels ? getStatsForLabels(prevPeriodLabels) : null, [prevPeriodLabels, getStatsForLabels]);
 
     // -- 12 Month Trend Data (KPI Status) --
     const kpiTrendData = useMemo(() => {
@@ -1186,10 +1193,6 @@ export default function Dashboard() {
         });
     }, [monthlyData, monthOptions, monthlyFilterPM, monthlyFilterAccount, monthlyFilterClient, monthlyFilterObjective]);
 
-    const calcChange = (curr: number, prev: number | undefined) => {
-        if (prev === undefined || prev === 0) return 0;
-        return ((curr - prev) / prev) * 100;
-    };
 
     // -- Filter Logic (Budget) --
     const filteredBudgetData = useMemo(() => budgetData.filter(item => {
@@ -1203,47 +1206,50 @@ export default function Dashboard() {
 
 
 
-    // KPI Summary for Tables
-    const buildKpiSummary = (groupedBy: 'pm' | 'team') => {
-        // Use filteredMonthlyData to ensure it responds to all currently active filters
-        const summaryMap = filteredMonthlyData.reduce((acc, row) => {
-            const key = groupedBy === 'pm' ? row.pm : row.team;
-            if (!key) return acc;
-            if (groupedBy === 'team' && key.toLowerCase().includes('sohan')) return acc;
-            if (!acc[key]) acc[key] = { label: key, total: 0, critical: 0, low: 0, onTrack: 0 };
+    const buildKpiSummary = useCallback((groupBy: 'pm' | 'team') => {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const stats: Record<string, any> = {};
+
+        filteredMonthlyData.forEach(row => {
+            const key = groupBy === 'pm' ? row.pm : row.team;
+            if (!key) return;
+
+            if (!stats[key]) {
+                stats[key] = { label: key, total: 0, critical: 0, low: 0, onTrack: 0 };
+            }
+
             const status = calculateKpiStatus(row);
-            acc[key].total += 1;
-            if (status === 'Critical') acc[key].critical += 1;
-            else if (status === 'Low') acc[key].low += 1;
-            else acc[key].onTrack += 1;
-            return acc;
-        }, {} as Record<string, any>);
+            stats[key].total++;
+            if (status === 'Critical') stats[key].critical++;
+            else if (status === 'Low') stats[key].low++;
+            else stats[key].onTrack++;
+        });
 
-        const field = groupedBy === 'pm' ? pmSortField : teamSortField;
-        const order = groupedBy === 'pm' ? pmSortOrder : teamSortOrder;
+        // Convert to array and sort
+        const arr = Object.values(stats);
+        const sortField = groupBy === 'pm' ? pmSortField : teamSortField;
+        const order = groupBy === 'pm' ? pmSortOrder : teamSortOrder;
 
-        return Object.values(summaryMap).map((s: any) => ({
-            ...s,
-            criticalPct: s.total > 0 ? (s.critical / s.total) * 100 : 0,
-            lowPct: s.total > 0 ? (s.low / s.total) * 100 : 0,
-            onTrackPct: s.total > 0 ? (s.onTrack / s.total) * 100 : 0
-        })).sort((a: any, b: any) => {
-            let valA = a[field];
-            let valB = b[field];
+        return arr.sort((a, b) => {
+            let valA = a[sortField];
+            let valB = b[sortField];
 
+            // Handle percentages (Crit %, Low %, OT %)
+            const field = sortField;
             if (field.includes('Pct')) {
                 const baseField = field.replace('Pct', '');
                 valA = a.total > 0 ? (a[baseField] / a.total) : 0;
                 valB = b.total > 0 ? (b[baseField] / b.total) : 0;
             }
 
-            if (typeof valA === 'string') return order === 'asc' ? valA.localeCompare(valB) : valB.localeCompare(valA);
-            return order === 'asc' ? valA - valB : valB - valA;
+            if (valA < valB) return order === 'asc' ? -1 : 1;
+            if (valA > valB) return order === 'asc' ? 1 : -1;
+            return 0;
         });
-    };
+    }, [filteredMonthlyData, pmSortField, pmSortOrder, teamSortField, teamSortOrder]);
 
-    const pmKpiSummary = useMemo(() => buildKpiSummary('pm'), [filteredMonthlyData, pmSortField, pmSortOrder]);
-    const teamKpiSummary = useMemo(() => buildKpiSummary('team'), [filteredMonthlyData, teamSortField, teamSortOrder]);
+    const pmKpiSummary = useMemo(() => buildKpiSummary('pm'), [buildKpiSummary]);
+    const teamKpiSummary = useMemo(() => buildKpiSummary('team'), [buildKpiSummary]);
 
     // -- Budget Logic: Currency Formatting --
     const parseCurrency = (val: string) => Math.ceil(parseFloat(val.replace(/,/g, '') || '0'));
@@ -1319,7 +1325,7 @@ export default function Dashboard() {
         return acc;
     }, {} as Record<string, Record<string, number>>), [budgetData, pmData, activePMs, heatmapMonths]);
 
-    const uniqueHeatmapPMs = useMemo(() => Array.from(activePMs).sort((a: any, b: any) => {
+    const uniqueHeatmapPMs = useMemo(() => Array.from(activePMs).sort((a: string, b: string) => {
         const totalA = heatmapMonths.reduce((sum, m) => sum + (heatmapData[a]?.[m] || 0), 0);
         const totalB = heatmapMonths.reduce((sum, m) => sum + (heatmapData[b]?.[m] || 0), 0);
         if (totalA !== totalB) return totalB - totalA;
@@ -1342,7 +1348,7 @@ export default function Dashboard() {
     const textMuted = darkMode ? "text-gray-400" : "text-gray-500";
     const trHover = darkMode ? "hover:bg-white/5" : "hover:bg-gray-50";
 
-    const SortHeader = ({ label, field, currentField, order, onSort, className = "", justify = "justify-center" }: any) => {
+    const SortHeader = ({ label, field, currentField, order, onSort, className = "", justify = "justify-center" }: { label: string, field: string, currentField: string, order: string, onSort: (f: string) => void, className?: string, justify?: string }) => {
         const isActive = field === currentField;
         return (
             <th
@@ -1404,7 +1410,15 @@ export default function Dashboard() {
             {/* Header */}
             <header className="mb-8 flex flex-col md:flex-row justify-between items-center gap-4">
                 <div className="flex items-center gap-6">
-                    <img src="/logo.png" alt="EME Logo" className="h-14 w-auto drop-shadow-2xl" />
+                    <div className={clsx("h-20 w-auto p-2 rounded-lg backdrop-blur-sm", darkMode ? "bg-white/10" : "bg-white shadow-sm border border-gray-100")}>
+                        <Image
+                            src={darkMode ? "/logo.png" : "/logo-light.png"}
+                            alt="EME Logo"
+                            width={200}
+                            height={80}
+                            className="h-full w-auto object-contain"
+                        />
+                    </div>
                     <div>
                         <h1 className="text-5xl font-black bg-clip-text text-transparent bg-gradient-to-r from-blue-400 via-purple-500 to-pink-500 uppercase tracking-tight">
                             Paid Media Team
@@ -1463,7 +1477,7 @@ export default function Dashboard() {
                     </div>
 
                     {/* Toggle Theme */}
-                    <div className="flex items-center gap-4">
+                    <div className="flex items-center gap-2">
                         <button
                             onClick={syncAll}
                             disabled={loading}
@@ -2536,6 +2550,7 @@ export default function Dashboard() {
                                                         <div className={clsx("p-4 rounded-2xl border shadow-2xl backdrop-blur-xl", darkMode ? "bg-black/80 border-white/10" : "bg-white/90 border-gray-200")}>
                                                             <p className="text-sm font-black mb-3">{label}</p>
                                                             <div className="space-y-2">
+                                                                {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
                                                                 {payload.map((entry: any, i: number) => (
                                                                     <div key={i} className="flex items-center justify-between gap-4">
                                                                         <div className="flex items-center gap-2">
@@ -2671,7 +2686,7 @@ export default function Dashboard() {
                             <div className="space-y-3">
                                 <h4 className="text-[10px] font-black uppercase tracking-widest text-green-500">Health Score</h4>
                                 <p className="text-xs leading-relaxed opacity-60">
-                                    A performance density score calculated **ONLY for accounts with objective "ROAS"**: <br />
+                                    A performance density score calculated **ONLY for accounts with objective &quot;ROAS&quot;**: <br />
                                     **On Track** = 100% <br />
                                     **Low** = 50% <br />
                                     **Critical** = 0% <br />
@@ -2681,7 +2696,7 @@ export default function Dashboard() {
                             <div className="space-y-3">
                                 <h4 className="text-[10px] font-black uppercase tracking-widest text-orange-500">Capacity Index</h4>
                                 <p className="text-xs leading-relaxed opacity-60">
-                                    The intensity score is assessed against a **Standard Benchmark of 40**. Managers exceeding this threshold are flagged as "High Intensity," indicating a potential need for workload redistribution.
+                                    The intensity score is assessed against a **Standard Benchmark of 40**. Managers exceeding this threshold are flagged as &quot;High Intensity,&quot; indicating a potential need for workload redistribution.
                                 </p>
                             </div>
                         </div>
@@ -2742,7 +2757,7 @@ export default function Dashboard() {
                                     </tr>
                                 </thead>
                                 <tbody className="divide-y divide-white/5">
-                                    {audienceAudit.pmSummaryList.map((s: any, idx) => (
+                                    {audienceAudit.pmSummaryList.map((s: { pm: string; zero: number; targeting: number; noAudience: number; observation: number; closed: number }, idx: number) => (
                                         <tr key={idx} className={trHover}>
                                             <td className="p-1.5 text-left border-r border-white/5 font-bold uppercase truncate max-w-[150px]">{s.pm}</td>
                                             <td className={clsx("p-1.5 font-mono font-black", s.zero > 0 ? "bg-red-500/10 text-red-500" : "opacity-10")}>{s.zero}</td>
@@ -2789,6 +2804,7 @@ export default function Dashboard() {
                                                 </tr>
                                             </thead>
                                             <tbody className="divide-y divide-white/5">
+                                                {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
                                                 {section.data.map((row: any, i: number) => (
                                                     <tr key={i} className={clsx("transition-colors group", trHover)}>
                                                         <td className="p-4 pl-8 font-black text-sm max-w-[250px] truncate">{row.accountName}</td>
@@ -2879,7 +2895,7 @@ export default function Dashboard() {
                                     </tr>
                                 </thead>
                                 <tbody className="divide-y divide-white/5">
-                                    {campaignAudit.pmSummaryList.map((s: any, idx) => (
+                                    {campaignAudit.pmSummaryList.map((s: { pm: string; budget: number; device: number; rotate: number; bidding: number; cpc: number; opti: number; display: number; disapproved: number; ads: number; lang: number; }, idx: number) => (
                                         <tr key={idx} className={trHover}>
                                             <td className="p-1.5 text-left border-r border-white/5 font-bold uppercase truncate max-w-[150px]">{s.pm}</td>
                                             <td className={clsx("p-1.5 font-mono font-black", s.budget > 0 ? "bg-red-500/10 text-red-500" : "opacity-05")}>{s.budget}</td>
@@ -2933,6 +2949,7 @@ export default function Dashboard() {
                                                 </tr>
                                             </thead>
                                             <tbody className="divide-y divide-white/5">
+                                                {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
                                                 {section.data.map((row: any, i: number) => (
                                                     <tr key={i} className={clsx("transition-colors group", trHover)}>
                                                         <td className="p-4 pl-8 font-black text-sm max-w-[250px] truncate">{row.accountName}</td>

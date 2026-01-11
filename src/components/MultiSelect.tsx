@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useRef, useEffect } from 'react';
-import { ChevronDown, Check, X } from 'lucide-react';
+import { ChevronDown, Check } from 'lucide-react';
 import { clsx } from 'clsx';
 
 interface MultiSelectProps {
