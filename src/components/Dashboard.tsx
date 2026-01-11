@@ -5,7 +5,6 @@ import { motion } from 'framer-motion';
 import { RefreshCcw, Filter, Activity, AlertTriangle, CheckCircle2, TrendingUp, TrendingDown, Users, Layers, Sun, Moon, Target, User, Globe, Trophy, Sparkles, Zap } from 'lucide-react';
 import { clsx } from 'clsx';
 import { ManagementData, BudgetData, MonthlyTotalData } from '@/lib/types';
-import { useSession } from "next-auth/react";
 
 import { MultiSelect } from './MultiSelect';
 import {
@@ -441,16 +440,14 @@ export default function Dashboard() {
 
     // -- Filter Logic (Monthly KPI) --
     const filteredMonthlyData = useMemo(() => monthlyData.filter(item => {
-        const monthLabel = formatMonthDisplay(item.month);
-        const itemStatus = calculateKpiStatus(item);
-        const matchMonth = monthlyFilterMonth.length === 0 || monthlyFilterMonth.includes(monthLabel);
+        const label = formatMonthDisplay(item.month);
+        const matchMonth = monthlyFilterMonth.length === 0 || monthlyFilterMonth.includes(label);
         const matchPM = monthlyFilterPM.length === 0 || monthlyFilterPM.includes(item.pm);
         const matchAccount = monthlyFilterAccount.length === 0 || monthlyFilterAccount.includes(item.accountName);
         const matchClient = monthlyFilterClient.length === 0 || monthlyFilterClient.includes(item.clientAccount);
         const matchObjective = monthlyFilterObjective.length === 0 || monthlyFilterObjective.includes(item.objective);
-        const matchStatus = monthlyFilterStatus.length === 0 || monthlyFilterStatus.includes(itemStatus);
-        const isNotExcluded = !EXCLUDED_PMS.includes(item.pm);
-        return matchMonth && matchPM && matchAccount && matchClient && matchObjective && matchStatus && isNotExcluded;
+        const matchStatus = monthlyFilterStatus.length === 0 || monthlyFilterStatus.includes(calculateKpiStatus(item));
+        return matchMonth && matchPM && matchAccount && matchClient && matchObjective && matchStatus;
     }).sort((a, b) => {
         let valA: any = (a as any)[monthlySortField] || '';
         let valB: any = (b as any)[monthlySortField] || '';
@@ -653,6 +650,7 @@ export default function Dashboard() {
         audienceData.forEach(row => {
             const cidKey = (row.cid || '').replace(/\D/g, '');
             const pm = cidToPm[cidKey] || 'Unknown';
+
             if (EXCLUDED_PMS.includes(pm)) return;
 
             // Filter by PM if selected
@@ -768,6 +766,7 @@ export default function Dashboard() {
         campaignAuditData.forEach(row => {
             const cidKey = (row.cid || '').replace(/\D/g, '');
             const pm = cidToPm[cidKey] || 'Unknown';
+
             if (EXCLUDED_PMS.includes(pm)) return;
 
             // Filter by PM if selected
@@ -1142,7 +1141,7 @@ export default function Dashboard() {
     const getPrevPeriodLabels = (labels: string[]) => {
         const sortedAll = [...monthOptions].sort((a, b) => new Date(a).getTime() - new Date(b).getTime());
         const minIdx = Math.min(...labels.map(l => sortedAll.indexOf(l)).filter(idx => idx !== -1));
-        if (minIdx === Infinity || minIdx === 0) return null;
+        if (minIdx === Infinity || minIdx === 0) return 0;
 
         const count = labels.length;
         const start = Math.max(0, minIdx - count);
@@ -1223,7 +1222,12 @@ export default function Dashboard() {
         const field = groupedBy === 'pm' ? pmSortField : teamSortField;
         const order = groupedBy === 'pm' ? pmSortOrder : teamSortOrder;
 
-        return Object.values(summaryMap).sort((a: any, b: any) => {
+        return Object.values(summaryMap).map((s: any) => ({
+            ...s,
+            criticalPct: s.total > 0 ? (s.critical / s.total) * 100 : 0,
+            lowPct: s.total > 0 ? (s.low / s.total) * 100 : 0,
+            onTrackPct: s.total > 0 ? (s.onTrack / s.total) * 100 : 0
+        })).sort((a: any, b: any) => {
             let valA = a[field];
             let valB = b[field];
 
@@ -1233,9 +1237,8 @@ export default function Dashboard() {
                 valB = b.total > 0 ? (b[baseField] / b.total) : 0;
             }
 
-            if (valA < valB) return order === 'asc' ? -1 : 1;
-            if (valA > valB) return order === 'asc' ? 1 : -1;
-            return 0;
+            if (typeof valA === 'string') return order === 'asc' ? valA.localeCompare(valB) : valB.localeCompare(valA);
+            return order === 'asc' ? valA - valB : valB - valA;
         });
     };
 
@@ -1401,11 +1404,7 @@ export default function Dashboard() {
             {/* Header */}
             <header className="mb-8 flex flex-col md:flex-row justify-between items-center gap-4">
                 <div className="flex items-center gap-6">
-                    <img
-                        src={darkMode ? "/logo.png" : "/logo-light.png"}
-                        alt="EME Logo"
-                        className={clsx("h-20 w-auto object-contain p-2 rounded-lg backdrop-blur-sm", darkMode ? "bg-white/10" : "bg-white shadow-sm border border-gray-100")}
-                    />
+                    <img src="/logo.png" alt="EME Logo" className="h-14 w-auto drop-shadow-2xl" />
                     <div>
                         <h1 className="text-5xl font-black bg-clip-text text-transparent bg-gradient-to-r from-blue-400 via-purple-500 to-pink-500 uppercase tracking-tight">
                             Paid Media Team
@@ -1464,7 +1463,7 @@ export default function Dashboard() {
                     </div>
 
                     {/* Toggle Theme */}
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-4">
                         <button
                             onClick={syncAll}
                             disabled={loading}
