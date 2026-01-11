@@ -1,36 +1,86 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Google Ads Dashboard
 
-## Getting Started
+A Next.js dashboard for monitoring Google Ads performance metrics, campaign health, and portfolio analytics.
 
-First, run the development server:
+## 🚀 Quick Start
+
+### Local Development
+
+1. **Install dependencies:**
+   ```bash
+   npm install
+   ```
+
+2. **Run the development server:**
+   ```bash
+   npm run dev
+   ```
+
+3. **Open your browser:**
+   Navigate to [http://localhost:3000](http://localhost:3000)
+
+### Making Changes
+
+1. **Edit files** in your code editor
+2. **Test locally** - changes auto-reload at `localhost:3000`
+3. **When ready to deploy**, ask to push to GitHub and deploy
+
+## 📦 Deployment
+
+The app is deployed on **Netlify** and auto-deploys when changes are pushed to the `main` branch.
+
+- **Live URL:** Your Netlify site URL
+- **Deployment:** Automatic on git push to `main`
+
+### Manual Deployment Steps
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+# Stage your changes
+git add .
+
+# Commit with a message
+git commit -m "Your commit message"
+
+# Push to GitHub (triggers Netlify deployment)
+git push origin main
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## 🛠️ Tech Stack
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+- **Framework:** Next.js 15.1.6
+- **React:** 19.2.3
+- **Styling:** Tailwind CSS 4
+- **Charts:** Recharts
+- **Animations:** Framer Motion
+- **Icons:** Lucide React
+- **Deployment:** Netlify
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## 📁 Project Structure
 
-## Learn More
+```
+├── src/
+│   ├── app/              # Next.js app directory
+│   │   ├── api/          # API routes
+│   │   ├── page.tsx      # Main page
+│   │   └── globals.css   # Global styles
+│   ├── components/       # React components
+│   │   ├── Dashboard.tsx # Main dashboard component
+│   │   └── MultiSelect.tsx
+│   └── lib/              # Utilities and types
+├── public/               # Static assets
+├── netlify.toml          # Netlify configuration
+└── package.json          # Dependencies
+```
 
-To learn more about Next.js, take a look at the following resources:
+## 🔧 Available Scripts
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+- `npm run dev` - Start development server
+- `npm run build` - Build for production
+- `npm run start` - Start production server
+- `npm run lint` - Run ESLint
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## 📝 Notes
 
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+- The dashboard pulls data from Google Sheets via the `/api/visual-bridge` endpoint
+- Authentication is handled via NextAuth (if configured)
+- All changes should be tested locally before pushing to production
