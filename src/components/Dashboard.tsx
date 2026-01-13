@@ -8,6 +8,10 @@ import Image from 'next/image';
 import { ManagementData, BudgetData, MonthlyTotalData } from '@/lib/types';
 
 import { MultiSelect } from './MultiSelect';
+import { ExportButton } from './ExportButton';
+import { BulkExportButton } from './BulkExportButton';
+import { DateRangePicker } from './DateRangePicker';
+import { DateSelector } from './DateSelector';
 import {
     XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
     AreaChart, Area, ScatterChart, Scatter, ZAxis, Cell, BarChart, Bar
@@ -88,11 +92,11 @@ const ChangeBadge = memo(({ curr, prev, trendInverted = false, showTrend = true 
 
     return (
         <div className={clsx(
-            "flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black tracking-tighter",
-            isNeutral ? "bg-gray-500/10 text-gray-400" :
-                isGood ? "bg-green-500/10 text-green-500" : "bg-red-500/10 text-red-500"
+            "flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[13px] font-black tracking-tight",
+            isNeutral ? "bg-gray-500/20 text-gray-500" :
+                isGood ? "bg-green-500/20 text-green-600" : "bg-red-500/20 text-red-600"
         )}>
-            {isUp ? <TrendingUp className="w-2.5 h-2.5" /> : isNeutral ? null : <TrendingDown className="w-2.5 h-2.5" />}
+            {isUp ? <TrendingUp className="w-3.5 h-3.5" /> : isNeutral ? null : <TrendingDown className="w-3.5 h-3.5" />}
             <span>{Math.abs(change).toFixed(0)}%</span>
         </div>
     );
@@ -172,14 +176,9 @@ const StatCard = memo(({ label, value, subValue, change, icon: Icon, color, tren
             </div>
             <div className="relative z-10 flex flex-col gap-4">
                 <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                        <div className={clsx("p-2 rounded-xl bg-current opacity-20")}>
-                            <Icon size={16} />
-                        </div>
-                        <span className="text-[10px] font-black uppercase tracking-[0.2em] opacity-60">
-                            {label}
-                        </span>
-                    </div>
+                    <span className="text-[10px] font-black uppercase tracking-[0.2em] opacity-60">
+                        {label}
+                    </span>
                     <ChangeBadge curr={value} prev={change} trendInverted={trendInverted} showTrend={showTrend} />
                 </div>
                 <div className="flex items-baseline gap-3">
@@ -262,11 +261,15 @@ export default function Dashboard() {
     const [dailyFilterClient, setDailyFilterClient] = useState<string[]>([]);
     const [dailyFilterObjective, setDailyFilterObjective] = useState<string[]>([]);
     const [dailyFilterStatus, setDailyFilterStatus] = useState<string[]>([]);
+    const [dailyStartDate, setDailyStartDate] = useState<string>('');
+    const [dailyEndDate, setDailyEndDate] = useState<string>('');
     const [portfolioFilterMonth, setPortfolioFilterMonth] = useState<string[]>([]);
     const [portfolioFilterTeam, setPortfolioFilterTeam] = useState<string[]>([]);
     const [portfolioFilterStrategist, setPortfolioFilterStrategist] = useState<string[]>([]);
     const [audienceFilterPM, setAudienceFilterPM] = useState<string[]>([]);
+    const [audienceSelectedDate, setAudienceSelectedDate] = useState<string>('');
     const [campaignFilterPM, setCampaignFilterPM] = useState<string[]>([]);
+    const [campaignSelectedDate, setCampaignSelectedDate] = useState<string>('');
 
     // Sorting State (Monthly)
     const [monthlySortField, setMonthlySortField] = useState<string>('accountName');
@@ -477,9 +480,71 @@ export default function Dashboard() {
 
     // -- Daily KPI Aggregation & Logic --
     const aggregatedDailyData = useMemo(() => {
+        // First, filter by date range if specified
+        let dataToAggregate = dailyData;
+
+        if (dailyStartDate || dailyEndDate) {
+            console.log('Date filtering active:', { dailyStartDate, dailyEndDate, totalRows: dailyData.length });
+
+            // Log first few dates to see format
+            const sampleDates = dailyData.slice(0, 5).map(row => row.month);
+            console.log('Sample dates from data:', sampleDates);
+
+            dataToAggregate = dailyData.filter(row => {
+                const itemDate = row.month;
+                if (!itemDate) return true; // Include rows without dates
+
+                try {
+                    // Parse the item date - handle MM/DD/YYYY format from Google Sheets
+                    let date: Date;
+
+                    // Check if it's in MM/DD/YYYY format
+                    if (itemDate.includes('/')) {
+                        const [month, day, year] = itemDate.split('/').map(Number);
+                        date = new Date(year, month - 1, day); // month is 0-indexed in JS
+                    } else {
+                        // Otherwise try standard parsing
+                        date = new Date(itemDate);
+                    }
+
+                    // Validate the date
+                    if (isNaN(date.getTime())) {
+                        console.warn('Invalid date:', itemDate);
+                        return true;
+                    }
+
+                    date.setHours(0, 0, 0, 0);
+
+                    if (dailyStartDate) {
+                        const startDate = new Date(dailyStartDate);
+                        startDate.setHours(0, 0, 0, 0);
+                        if (date < startDate) {
+                            return false;
+                        }
+                    }
+
+                    if (dailyEndDate) {
+                        const endDate = new Date(dailyEndDate);
+                        endDate.setHours(23, 59, 59, 999); // End of day
+                        if (date > endDate) {
+                            return false;
+                        }
+                    }
+
+                    return true;
+                } catch (e) {
+                    console.warn('Error parsing date:', itemDate, e);
+                    return true; // Include rows with invalid dates
+                }
+            });
+
+            console.log('After date filter:', { filteredRows: dataToAggregate.length });
+        }
+
+        // Then aggregate the filtered data
         const aggregated: Record<string, MonthlyTotalData> = {};
 
-        dailyData.forEach(row => {
+        dataToAggregate.forEach(row => {
             const key = row.cid || row.accountName;
             if (!aggregated[key]) {
                 aggregated[key] = { ...row };
@@ -499,7 +564,7 @@ export default function Dashboard() {
         });
 
         return Object.values(aggregated);
-    }, [dailyData]);
+    }, [dailyData, dailyStartDate, dailyEndDate]);
 
 
     const filteredDailyData = useMemo(() => aggregatedDailyData.filter(item => {
@@ -510,6 +575,7 @@ export default function Dashboard() {
         const matchObjective = dailyFilterObjective.length === 0 || dailyFilterObjective.includes(item.objective);
         const matchStatus = dailyFilterStatus.length === 0 || dailyFilterStatus.includes(itemStatus);
         const isNotExcluded = !EXCLUDED_PMS.includes(item.pm);
+
         return matchPM && matchAccount && matchClient && matchObjective && matchStatus && isNotExcluded;
     }).sort((a, b) => {
         let valA: any = (a as any)[dailySortField] || '';
@@ -633,7 +699,14 @@ export default function Dashboard() {
             if (item.cid) cidToPm[item.cid.replace(/\D/g, '')] = item.pm;
         });
 
-        const uniqueDates = Array.from(new Set(audienceData.map(d => d.date).filter(Boolean)))
+        // Filter by selected date if specified
+        let filteredAudienceData = audienceData;
+
+        if (audienceSelectedDate) {
+            filteredAudienceData = audienceData.filter(row => row.date === audienceSelectedDate);
+        }
+
+        const uniqueDates = Array.from(new Set(filteredAudienceData.map(d => d.date).filter(Boolean)))
             .sort((a, b) => new Date(b).getTime() - new Date(a).getTime());
         const latestDate = uniqueDates[0] || null;
         const previousDate = uniqueDates[1] || null;
@@ -650,7 +723,7 @@ export default function Dashboard() {
             accountIssues: {} as Record<string, number>
         };
 
-        audienceData.forEach(row => {
+        filteredAudienceData.forEach(row => {
             const cidKey = (row.cid || '').replace(/\D/g, '');
             const pm = cidToPm[cidKey] || 'Unknown';
             if (EXCLUDED_PMS.includes(pm)) return;
@@ -720,13 +793,14 @@ export default function Dashboard() {
 
         return {
             ...results,
+            availableDates: uniqueDates,
             pmSummaryList: Object.values(results.pmSummary).sort((a, b) => {
                 const totalA = a.zero + a.targeting + a.noAudience + a.observation + a.closed;
                 const totalB = b.zero + b.targeting + b.noAudience + b.observation + b.closed;
                 return totalB - totalA;
             })
         };
-    }, [audienceData, data, audienceFilterPM]);
+    }, [audienceData, data, audienceFilterPM, audienceSelectedDate]);
 
     const campaignAudit = useMemo(() => {
         const LANGUAGE_MAP: Record<string, string> = {
@@ -739,7 +813,14 @@ export default function Dashboard() {
         };
         const normalize = (v: any) => (v || '').toString().trim().toLowerCase();
 
-        const uniqueDates = Array.from(new Set(campaignAuditData.map(d => d.date).filter(Boolean)))
+        // Filter by selected date if specified
+        let filteredCampaignData = campaignAuditData;
+
+        if (campaignSelectedDate) {
+            filteredCampaignData = campaignAuditData.filter(row => row.date === campaignSelectedDate);
+        }
+
+        const uniqueDates = Array.from(new Set(filteredCampaignData.map(d => d.date).filter(Boolean)))
             .sort((a, b) => new Date(b).getTime() - new Date(a).getTime());
         const latestDate = uniqueDates[0] || null;
         const previousDate = uniqueDates[1] || null;
@@ -765,7 +846,7 @@ export default function Dashboard() {
             accountIssues: {} as Record<string, number>
         };
 
-        campaignAuditData.forEach(row => {
+        filteredCampaignData.forEach(row => {
             const cidKey = (row.cid || '').replace(/\D/g, '');
             const pm = cidToPm[cidKey] || 'Unknown';
             if (EXCLUDED_PMS.includes(pm)) return;
@@ -797,9 +878,14 @@ export default function Dashboard() {
 
             if (isLatest) {
                 if (!results.pmSummary[pm]) {
-                    results.pmSummary[pm] = { pm, budget: 0, device: 0, rotate: 0, cpc: 0, opti: 0, display: 0, disapproved: 0, ads: 0, lang: 0 };
+                    results.pmSummary[pm] = { pm, totalCampaigns: 0, budget: 0, device: 0, rotate: 0, cpc: 0, opti: 0, display: 0, disapproved: 0, ads: 0, lang: 0 };
                 }
                 if (!results.accountIssues[cidKey]) results.accountIssues[cidKey] = 0;
+
+                // Count total campaigns for this PM (only for latest date)
+                if (isLatest) {
+                    results.pmSummary[pm].totalCampaigns++;
+                }
 
                 if (budget > 0 && budget < 10) {
                     results.underBudget.push({ ...row, pm, reason: `$${budget} Budget` });
@@ -894,13 +980,14 @@ export default function Dashboard() {
 
         return {
             ...results,
+            availableDates: uniqueDates,
             pmSummaryList: Object.values(results.pmSummary).sort((a, b) => {
                 const totalA = a.budget + a.device + a.rotate + a.cpc + a.opti + a.display + a.disapproved + a.ads + a.lang;
                 const totalB = b.budget + b.device + b.rotate + b.cpc + b.opti + b.display + b.disapproved + b.ads + b.lang;
                 return totalB - totalA;
             })
         };
-    }, [campaignAuditData, data, campaignFilterPM]);
+    }, [campaignAuditData, data, campaignFilterPM, campaignSelectedDate]);
 
     const dailyStats = useMemo(() => {
         const stats = {
@@ -1548,6 +1635,28 @@ export default function Dashboard() {
                     )}
 
                     {/* Main Table */}
+                    <div className="flex justify-between items-center mb-4">
+                        <h3 className="text-lg font-bold">Management Data</h3>
+                        <ExportButton
+                            filename="management-data"
+                            title="Management Data"
+                            columns={[
+                                { header: 'CID', key: 'cid' },
+                                { header: 'Account Name', key: 'accountName' },
+                                { header: 'Client Account', key: 'clientAccount' },
+                                { header: 'PM', key: 'pm' },
+                                { header: 'Team', key: 'team' },
+                                { header: 'Objective', key: 'objective' },
+                                { header: 'Conv. Source', key: 'conversionSource' },
+                                { header: 'Target ROAS', key: 'targetRoas' },
+                                { header: 'Strategist', key: 'strategist' },
+                                { header: 'Type', key: 'type' },
+                                { header: 'Country', key: 'country' },
+                            ]}
+                            data={filteredData}
+                            darkMode={darkMode}
+                        />
+                    </div>
                     <div className={clsx("overflow-x-auto rounded-2xl border shadow-2xl relative z-10", darkMode ? "border-white/10" : "border-gray-200")}>
                         <table className="w-full text-left border-collapse">
                             <thead>
@@ -1681,6 +1790,28 @@ export default function Dashboard() {
 
 
                     {/* Main Table (Monthly KPI) */}
+                    <div className="flex justify-between items-center mb-4">
+                        <h3 className="text-lg font-bold">Monthly KPI Data</h3>
+                        <ExportButton
+                            filename="monthly-kpi-data"
+                            title="Monthly KPI Data"
+                            columns={[
+                                { header: 'CID', key: 'cid' },
+                                { header: 'Account Name', key: 'accountName' },
+                                { header: 'Conv. Source', key: 'conversionSource' },
+                                { header: 'PM', key: 'pm' },
+                                { header: 'Target', key: 'targetRoas' },
+                                { header: 'Actual', key: 'actualRoas' },
+                                { header: 'Impressions', key: 'impressions' },
+                                { header: 'Clicks', key: 'clicks' },
+                                { header: 'Cost', key: 'cost' },
+                                { header: 'Conversions', key: 'conversions' },
+                                { header: 'Revenue', key: 'revenue' },
+                            ]}
+                            data={filteredMonthlyData}
+                            darkMode={darkMode}
+                        />
+                    </div>
                     <div className={clsx("rounded-2xl border shadow-2xl relative z-10 overflow-hidden", darkMode ? "border-white/10" : "border-gray-200")}>
                         <div className="max-h-[750px] overflow-y-auto overflow-x-auto scrollbar-thin scrollbar-thumb-white/10 scrollbar-track-transparent">
                             <table className="w-full text-left border-collapse table-auto">
@@ -1765,8 +1896,29 @@ export default function Dashboard() {
                     <div className="flex flex-col gap-10 mt-12 mb-10">
                         {/* PM KPI Summary */}
                         <div className={clsx("overflow-hidden rounded-2xl border shadow-lg", cardClass)}>
-                            <div className={clsx("p-4 border-b text-xs font-black tracking-widest uppercase text-center", darkMode ? "border-white/10 bg-white/5 text-gray-400" : "border-gray-200 bg-gray-50 text-gray-600")}>
-                                PM KPI Performance Summary
+                            <div className={clsx("p-4 border-b flex items-center justify-between", darkMode ? "border-white/10 bg-white/5" : "border-gray-200 bg-gray-50")}>
+                                <span className={clsx("text-xs font-black tracking-widest uppercase", darkMode ? "text-gray-400" : "text-gray-600")}>PM KPI Performance Summary</span>
+                                <ExportButton
+                                    filename="pm-kpi-summary"
+                                    title="PM KPI Performance Summary"
+                                    columns={[
+                                        { header: 'PM', key: 'label' },
+                                        { header: 'Accounts', key: 'total' },
+                                        { header: 'Critical', key: 'critical' },
+                                        { header: 'Critical %', key: 'criticalPct' },
+                                        { header: 'Low', key: 'low' },
+                                        { header: 'Low %', key: 'lowPct' },
+                                        { header: 'On Track', key: 'onTrack' },
+                                        { header: 'On Track %', key: 'onTrackPct' },
+                                    ]}
+                                    data={pmKpiSummary.map(s => ({
+                                        ...s,
+                                        criticalPct: s.total > 0 ? `${(s.critical / s.total * 100).toFixed(0)}%` : '0%',
+                                        lowPct: s.total > 0 ? `${(s.low / s.total * 100).toFixed(0)}%` : '0%',
+                                        onTrackPct: s.total > 0 ? `${(s.onTrack / s.total * 100).toFixed(0)}%` : '0%',
+                                    }))}
+                                    darkMode={darkMode}
+                                />
                             </div>
                             <div className="overflow-x-auto">
                                 <table className="w-full text-xs text-center">
@@ -1809,8 +1961,29 @@ export default function Dashboard() {
 
                         {/* Team KPI Summary */}
                         <div className={clsx("overflow-hidden rounded-2xl border shadow-lg", cardClass)}>
-                            <div className={clsx("p-4 border-b text-xs font-black tracking-widest uppercase text-center", darkMode ? "border-white/10 bg-white/5 text-gray-400" : "border-gray-200 bg-gray-50 text-gray-600")}>
-                                Team KPI Performance Summary
+                            <div className={clsx("p-4 border-b flex items-center justify-between", darkMode ? "border-white/10 bg-white/5" : "border-gray-200 bg-gray-50")}>
+                                <span className={clsx("text-xs font-black tracking-widest uppercase", darkMode ? "text-gray-400" : "text-gray-600")}>Team KPI Performance Summary</span>
+                                <ExportButton
+                                    filename="team-kpi-summary"
+                                    title="Team KPI Performance Summary"
+                                    columns={[
+                                        { header: 'Team', key: 'label' },
+                                        { header: 'Accounts', key: 'total' },
+                                        { header: 'Critical', key: 'critical' },
+                                        { header: 'Critical %', key: 'criticalPct' },
+                                        { header: 'Low', key: 'low' },
+                                        { header: 'Low %', key: 'lowPct' },
+                                        { header: 'On Track', key: 'onTrack' },
+                                        { header: 'On Track %', key: 'onTrackPct' },
+                                    ]}
+                                    data={teamKpiSummary.map(s => ({
+                                        ...s,
+                                        criticalPct: s.total > 0 ? `${(s.critical / s.total * 100).toFixed(0)}%` : '0%',
+                                        lowPct: s.total > 0 ? `${(s.low / s.total * 100).toFixed(0)}%` : '0%',
+                                        onTrackPct: s.total > 0 ? `${(s.onTrack / s.total * 100).toFixed(0)}%` : '0%',
+                                    }))}
+                                    darkMode={darkMode}
+                                />
                             </div>
                             <div className="overflow-x-auto">
                                 <table className="w-full text-xs text-center">
@@ -1922,7 +2095,15 @@ export default function Dashboard() {
                             <Filter className="w-4 h-4" />
                             <span className="text-sm font-medium">Daily KPI Filters:</span>
                         </div>
-                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
+                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-6 gap-4">
+                            <DateRangePicker
+                                label="Date Range"
+                                startDate={dailyStartDate}
+                                endDate={dailyEndDate}
+                                onStartDateChange={setDailyStartDate}
+                                onEndDateChange={setDailyEndDate}
+                                darkMode={darkMode}
+                            />
                             <MultiSelect label="Status" options={['Critical', 'Low', 'On Track']} selected={dailyFilterStatus} onChange={setDailyFilterStatus} darkMode={darkMode} />
                             <MultiSelect label="PM" options={uniqueDailyPMs} selected={dailyFilterPM} onChange={setDailyFilterPM} darkMode={darkMode} />
                             <MultiSelect label="Account" options={uniqueDailyAccounts} selected={dailyFilterAccount} onChange={setDailyFilterAccount} darkMode={darkMode} />
@@ -2084,6 +2265,28 @@ export default function Dashboard() {
                     )}
 
                     {/* Main Table (Daily KPI) */}
+                    <div className="flex justify-between items-center mb-4">
+                        <h3 className="text-lg font-bold">Daily KPI Data</h3>
+                        <ExportButton
+                            filename="daily-kpi-data"
+                            title="Daily KPI Data"
+                            columns={[
+                                { header: 'CID', key: 'cid' },
+                                { header: 'Account Name', key: 'accountName' },
+                                { header: 'Conv. Source', key: 'conversionSource' },
+                                { header: 'PM', key: 'pm' },
+                                { header: 'Target', key: 'targetRoas' },
+                                { header: 'Actual', key: 'actualRoas' },
+                                { header: 'Impressions', key: 'impressions' },
+                                { header: 'Clicks', key: 'clicks' },
+                                { header: 'Cost', key: 'cost' },
+                                { header: 'Conversions', key: 'conversions' },
+                                { header: 'Revenue', key: 'conversionValue' },
+                            ]}
+                            data={filteredDailyData}
+                            darkMode={darkMode}
+                        />
+                    </div>
                     <div className={clsx("rounded-2xl border shadow-2xl relative z-10 overflow-hidden", darkMode ? "border-white/10" : "border-gray-200")}>
                         <div className="max-h-[750px] overflow-y-auto overflow-x-auto scrollbar-thin scrollbar-thumb-white/10 scrollbar-track-transparent">
                             <table className="w-full text-left border-collapse table-auto">
@@ -2583,6 +2786,19 @@ export default function Dashboard() {
                                 <h3 className="text-xl font-black tracking-tight">Manager Capacity & Workload</h3>
                                 <p className={clsx("text-xs font-bold opacity-40", textMuted)}>RANKED BY MANAGED PORTFOLIO VALUE</p>
                             </div>
+                            <ExportButton
+                                filename="manager-capacity"
+                                title="Manager Capacity & Workload"
+                                columns={[
+                                    { header: 'Manager', key: 'pm' },
+                                    { header: 'Accounts', key: 'accounts' },
+                                    { header: 'Monthly Ad Spend', key: 'totalCost' },
+                                    { header: 'Health Score', key: 'healthScore' },
+                                    { header: 'Global Score', key: 'globalScore' },
+                                ]}
+                                data={portfolioStats}
+                                darkMode={darkMode}
+                            />
                         </div>
                         <div className="overflow-x-auto">
                             <table className="w-full text-left">
@@ -2715,15 +2931,107 @@ export default function Dashboard() {
                             </p>
                         </div>
                         <div className="flex items-center gap-4">
+                            <DateSelector
+                                label="Select Date"
+                                selectedDate={audienceSelectedDate}
+                                availableDates={audienceAudit.availableDates || []}
+                                onDateChange={setAudienceSelectedDate}
+                                darkMode={darkMode}
+                            />
+                            <BulkExportButton
+                                darkMode={darkMode}
+                                tables={[
+                                    {
+                                        id: 'audience-pm-summary',
+                                        name: 'audience_pm_summary',
+                                        title: 'Audience Audit - Manager Summary',
+                                        columns: [
+                                            { header: '#', key: 'index' },
+                                            { header: 'Manager', key: 'pm' },
+                                            { header: 'Zero Search', key: 'zero' },
+                                            { header: 'Targeting Bug', key: 'targeting' },
+                                            { header: 'No Audience', key: 'noAudience' },
+                                            { header: 'RLSA Obs', key: 'observation' },
+                                            { header: 'Closed', key: 'closed' },
+                                        ],
+                                        data: audienceAudit.pmSummaryList.map((s, idx) => ({ index: idx + 1, ...s })),
+                                    },
+                                    {
+                                        id: 'audience-zero-search',
+                                        name: 'audience_zero_search',
+                                        title: 'Audience Audit - Zero Search Size',
+                                        columns: [
+                                            { header: '#', key: 'index' },
+                                            { header: 'Account Name', key: 'accountName' },
+                                            { header: 'Campaign Name', key: 'campaignName' },
+                                            { header: 'Ad Group Name', key: 'adGroupName' },
+                                            { header: 'Audience Name', key: 'audienceName' },
+                                        ],
+                                        data: audienceAudit.searchSizeZero.map((d: any, idx: number) => ({ index: idx + 1, ...d })),
+                                    },
+                                    {
+                                        id: 'audience-targeting-bug',
+                                        name: 'audience_targeting_bug',
+                                        title: 'Audience Audit - Targeting Bug',
+                                        columns: [
+                                            { header: '#', key: 'index' },
+                                            { header: 'Account Name', key: 'accountName' },
+                                            { header: 'Campaign Name', key: 'campaignName' },
+                                            { header: 'Ad Group Name', key: 'adGroupName' },
+                                        ],
+                                        data: audienceAudit.targetingWithoutRemarketing.map((d: any, idx: number) => ({ index: idx + 1, ...d })),
+                                    },
+                                    {
+                                        id: 'audience-no-audience',
+                                        name: 'audience_no_audience',
+                                        title: 'Audience Audit - No Audience Added',
+                                        columns: [
+                                            { header: '#', key: 'index' },
+                                            { header: 'Account Name', key: 'accountName' },
+                                            { header: 'Campaign Name', key: 'campaignName' },
+                                            { header: 'Ad Group Name', key: 'adGroupName' },
+                                        ],
+                                        data: audienceAudit.noAudienceAdded.map((d: any, idx: number) => ({ index: idx + 1, ...d })),
+                                    },
+                                    {
+                                        id: 'audience-rlsa-obs',
+                                        name: 'audience_rlsa_observation',
+                                        title: 'Audience Audit - RLSA Observation',
+                                        columns: [
+                                            { header: '#', key: 'index' },
+                                            { header: 'Account Name', key: 'accountName' },
+                                            { header: 'Campaign Name', key: 'campaignName' },
+                                            { header: 'Ad Group Name', key: 'adGroupName' },
+                                        ],
+                                        data: audienceAudit.observationWithRlsa.map((d: any, idx: number) => ({ index: idx + 1, ...d })),
+                                    },
+                                    {
+                                        id: 'audience-closed',
+                                        name: 'audience_closed_membership',
+                                        title: 'Audience Audit - Closed Membership',
+                                        columns: [
+                                            { header: '#', key: 'index' },
+                                            { header: 'Account Name', key: 'accountName' },
+                                            { header: 'Campaign Name', key: 'campaignName' },
+                                            { header: 'Ad Group Name', key: 'adGroupName' },
+                                            { header: 'Audience Name', key: 'audienceName' },
+                                        ],
+                                        data: audienceAudit.closedMembership.map((d: any, idx: number) => ({ index: idx + 1, ...d })),
+                                    },
+                                ]}
+                            />
                             <div className="w-56">
                                 <MultiSelect label="Filter PM" options={uniquePMs} selected={audienceFilterPM} onChange={setAudienceFilterPM} darkMode={darkMode} />
                             </div>
                             {audienceAudit.latestDate && (
-                                <div className={clsx("px-4 py-2 rounded-2xl border flex items-center gap-3 self-end md:self-auto", darkMode ? "bg-white/5 border-white/10" : "bg-white border-gray-200 shadow-sm")}>
-                                    <div className="w-2 h-2 rounded-full bg-purple-500 animate-pulse"></div>
-                                    <div className="flex flex-col">
-                                        <span className="text-[10px] font-black uppercase opacity-40 leading-none">Latest Snapshot</span>
-                                        <span className="text-sm font-black tracking-tight leading-normal uppercase">{audienceAudit.latestDate}</span>
+                                <div>
+                                    <label className="block text-xs mb-1 ml-1 opacity-0 pointer-events-none">Date</label>
+                                    <div className={clsx("px-4 py-2 rounded-2xl border flex items-center gap-3", darkMode ? "bg-white/5 border-white/10" : "bg-white border-gray-200 shadow-sm")}>
+                                        <div className="w-2 h-2 rounded-full bg-purple-500 animate-pulse"></div>
+                                        <div className="flex flex-col">
+                                            <span className="text-[10px] font-black uppercase opacity-40 leading-none">Latest Snapshot</span>
+                                            <span className="text-sm font-black tracking-tight leading-normal uppercase">{audienceAudit.latestDate}</span>
+                                        </div>
                                     </div>
                                 </div>
                             )}
@@ -2741,30 +3049,46 @@ export default function Dashboard() {
 
                     {/* PM Summary heatmap style table */}
                     <div className={clsx("overflow-hidden rounded-3xl border shadow-xl relative", cardClass)}>
-                        <div className={clsx("p-4 border-b text-[10px] font-black uppercase tracking-[0.2em] text-center", darkMode ? "border-white/10 bg-white/5 opacity-60" : "border-gray-200 bg-gray-50 text-gray-700")}>
-                            Manager Audit Summary
+                        <div className={clsx("p-4 border-b flex items-center justify-between", darkMode ? "border-white/10 bg-white/5" : "border-gray-200 bg-gray-50")}>
+                            <span className={clsx("text-[10px] font-black uppercase tracking-[0.2em]", darkMode ? "opacity-60" : "text-gray-700")}>Manager Audit Summary</span>
+                            <ExportButton
+                                filename="audience-audit-pm-summary"
+                                title="Audience Audit - Manager Summary"
+                                columns={[
+                                    { header: 'Manager', key: 'pm' },
+                                    { header: 'Zero Search', key: 'zero' },
+                                    { header: 'Targeting Bug', key: 'targeting' },
+                                    { header: 'No Audience', key: 'noAudience' },
+                                    { header: 'RLSA Obs', key: 'observation' },
+                                    { header: 'Closed', key: 'closed' },
+                                ]}
+                                data={audienceAudit.pmSummaryList}
+                                darkMode={darkMode}
+                            />
                         </div>
                         <div className="overflow-x-auto">
-                            <table className="w-full text-center text-xs">
+                            <table className="w-full text-center text-xs table-fixed">
                                 <thead className={clsx("sticky top-0 z-10", darkMode ? "bg-[#111] text-gray-500" : "bg-gray-100 text-gray-600")}>
                                     <tr className="border-b border-white/5 uppercase tracking-tighter text-[12px]">
-                                        <th className="p-1.5 text-left border-r border-white/5">Manager</th>
-                                        <th className="p-1.5">Zero Search</th>
-                                        <th className="p-1.5">Targeting Bug</th>
-                                        <th className="p-1.5">No Audience</th>
-                                        <th className="p-1.5">RLSA Obs</th>
-                                        <th className="p-1.5">Closed</th>
+                                        <th className="p-1 text-center w-8">#</th>
+                                        <th className="p-1 text-left border-r border-white/5 w-28">Manager</th>
+                                        <th className="p-1 w-16">Zero Search</th>
+                                        <th className="p-1 w-16">Targeting Bug</th>
+                                        <th className="p-1 w-16">No Audience</th>
+                                        <th className="p-1 w-16">RLSA Obs</th>
+                                        <th className="p-1 w-16">Closed</th>
                                     </tr>
                                 </thead>
                                 <tbody className="divide-y divide-white/5">
                                     {audienceAudit.pmSummaryList.map((s: { pm: string; zero: number; targeting: number; noAudience: number; observation: number; closed: number }, idx: number) => (
                                         <tr key={idx} className={trHover}>
-                                            <td className="p-1.5 text-left border-r border-white/5 font-bold uppercase truncate max-w-[150px]">{s.pm}</td>
-                                            <td className={clsx("p-1.5 font-mono font-black", s.zero > 0 ? "bg-red-500/10 text-red-500" : "opacity-10")}>{s.zero}</td>
-                                            <td className={clsx("p-1.5 font-mono font-black", s.targeting > 0 ? "bg-orange-500/10 text-orange-500" : "opacity-10")}>{s.targeting}</td>
-                                            <td className={clsx("p-1.5 font-mono font-black", s.noAudience > 0 ? "bg-red-500/10 text-red-500" : "opacity-10")}>{s.noAudience}</td>
-                                            <td className={clsx("p-1.5 font-mono font-black", s.observation > 0 ? "bg-blue-500/10 text-blue-500" : "opacity-10")}>{s.observation}</td>
-                                            <td className={clsx("p-1.5 font-mono font-black", s.closed > 0 ? "bg-orange-500/10 text-orange-500" : "opacity-10")}>{s.closed}</td>
+                                            <td className="p-1 text-center opacity-30 font-mono text-[10px]">{idx + 1}</td>
+                                            <td className="p-1 text-left border-r border-white/5 font-bold capitalize truncate">{s.pm.toLowerCase()}</td>
+                                            <td className={clsx("p-1 font-mono font-black", s.zero > 0 ? "bg-red-500/10 text-red-500" : "opacity-10")}>{s.zero}</td>
+                                            <td className={clsx("p-1 font-mono font-black", s.targeting > 0 ? "bg-orange-500/10 text-orange-500" : "opacity-10")}>{s.targeting}</td>
+                                            <td className={clsx("p-1 font-mono font-black", s.noAudience > 0 ? "bg-red-500/10 text-red-500" : "opacity-10")}>{s.noAudience}</td>
+                                            <td className={clsx("p-1 font-mono font-black", s.observation > 0 ? "bg-blue-500/10 text-blue-500" : "opacity-10")}>{s.observation}</td>
+                                            <td className={clsx("p-1 font-mono font-black", s.closed > 0 ? "bg-orange-500/10 text-orange-500" : "opacity-10")}>{s.closed}</td>
                                         </tr>
                                     ))}
                                 </tbody>
@@ -2789,35 +3113,52 @@ export default function Dashboard() {
                                         </div>
                                         <h3 className="text-xl font-black tracking-tight uppercase">{section.title}</h3>
                                     </div>
-                                    <span className="text-[10px] font-black opacity-30 uppercase tracking-[0.3em]">{section.data.length} Flagged</span>
+                                    <div className="flex items-center gap-4">
+                                        <span className="text-[10px] font-black opacity-30 uppercase tracking-[0.3em]">{section.data.length} Flagged</span>
+                                        <ExportButton
+                                            filename={`audience-${section.title.toLowerCase().replace(/\s+/g, '-').replace(/[()]/g, '')}`}
+                                            title={`Audience Health - ${section.title}`}
+                                            columns={[
+                                                { header: 'Account Name', key: 'accountName' },
+                                                { header: 'Campaign Context', key: 'campaignName' },
+                                                { header: 'Flagged List', key: 'audience' },
+                                                { header: 'Setting', key: 'audienceSetting' },
+                                                { header: 'Manager', key: 'pm' },
+                                            ]}
+                                            data={section.data}
+                                            darkMode={darkMode}
+                                        />
+                                    </div>
                                 </div>
                                 <div className={clsx("rounded-[2rem] border shadow-2xl relative overflow-hidden", cardClass)}>
                                     <div className="max-h-[500px] overflow-y-auto overflow-x-auto scrollbar-thin scrollbar-thumb-white/10">
                                         <table className="w-full text-left text-xs border-collapse">
                                             <thead className={clsx("sticky top-0 z-20 font-black uppercase tracking-widest text-[10px]", darkMode ? "bg-[#0a0a0a] text-gray-500" : "bg-gray-50 text-gray-600")}>
                                                 <tr>
-                                                    <th className="p-4 pl-8">Account Name</th>
-                                                    <th className="p-4">Campaign Context</th>
-                                                    <th className="p-4">Flagged List</th>
-                                                    <th className="p-4">Setting</th>
-                                                    <th className="p-4 pr-8 text-right">Manager</th>
+                                                    <th className="p-2 pl-6 text-center w-12">#</th>
+                                                    <th className="p-2">Account Name</th>
+                                                    <th className="p-2">Campaign Context</th>
+                                                    <th className="p-2">Flagged List</th>
+                                                    <th className="p-2">Setting</th>
+                                                    <th className="p-2 pr-6 text-right">Manager</th>
                                                 </tr>
                                             </thead>
                                             <tbody className="divide-y divide-white/5">
                                                 {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
                                                 {section.data.map((row: any, i: number) => (
                                                     <tr key={i} className={clsx("transition-colors group", trHover)}>
-                                                        <td className="p-4 pl-8 font-black text-sm max-w-[250px] truncate">{row.accountName}</td>
-                                                        <td className="p-4 opacity-70 font-mono text-[11px] truncate max-w-[300px]">{row.campaignName}</td>
-                                                        <td className="p-4 font-medium text-blue-400 truncate max-w-[200px]">{row.audience}</td>
-                                                        <td className="p-4">
+                                                        <td className="p-2 pl-6 text-center opacity-30 font-mono text-[10px]">{i + 1}</td>
+                                                        <td className="p-2 font-black text-sm max-w-[250px] truncate">{row.accountName}</td>
+                                                        <td className="p-2 opacity-70 font-mono text-[11px] truncate max-w-[300px]">{row.campaignName}</td>
+                                                        <td className="p-2 font-medium text-blue-400 truncate max-w-[200px]">{row.audience}</td>
+                                                        <td className="p-2">
                                                             <span className={clsx("px-2 py-0.5 rounded-full font-black text-[9px] uppercase",
                                                                 row.audienceSetting === 'Targeting' ? "bg-purple-500/20 text-purple-400" : "bg-blue-500/20 text-blue-400"
                                                             )}>
                                                                 {row.audienceSetting}
                                                             </span>
                                                         </td>
-                                                        <td className="p-4 pr-8 text-right opacity-30 font-black tracking-tighter uppercase text-[10px] whitespace-nowrap">{row.pm}</td>
+                                                        <td className="p-2 pr-6 text-right opacity-30 font-black tracking-tighter uppercase text-[10px] whitespace-nowrap">{row.pm}</td>
                                                     </tr>
                                                 ))}
                                             </tbody>
@@ -2841,15 +3182,152 @@ export default function Dashboard() {
                             </p>
                         </div>
                         <div className="flex items-center gap-4">
+                            <DateSelector
+                                label="Select Date"
+                                selectedDate={campaignSelectedDate}
+                                availableDates={campaignAudit.availableDates || []}
+                                onDateChange={setCampaignSelectedDate}
+                                darkMode={darkMode}
+                            />
+                            <BulkExportButton
+                                darkMode={darkMode}
+                                tables={[
+                                    {
+                                        id: 'campaign-pm-summary',
+                                        name: 'campaign_pm_summary',
+                                        title: 'Campaign Audit - Manager Summary',
+                                        columns: [
+                                            { header: '#', key: 'index' },
+                                            { header: 'Manager', key: 'pm' },
+                                            { header: 'Total Campaigns', key: 'totalCampaigns' },
+                                            { header: 'Budget', key: 'budget' },
+                                            { header: 'Device', key: 'device' },
+                                            { header: 'Rotation', key: 'rotation' },
+                                            { header: 'Max CPC', key: 'cpc' },
+                                            { header: 'Opti Score', key: 'opti' },
+                                            { header: 'Display', key: 'display' },
+                                            { header: 'Policy', key: 'disapproved' },
+                                            { header: 'Zero Ads', key: 'ads' },
+                                            { header: 'Lang', key: 'lang' },
+                                        ],
+                                        data: campaignAudit.pmSummaryList.map((s, idx) => ({ index: idx + 1, ...s })),
+                                    },
+                                    {
+                                        id: 'campaign-under-budget',
+                                        name: 'campaign_under_budget',
+                                        title: 'Campaign Audit - Under $10 Budget',
+                                        columns: [
+                                            { header: '#', key: 'index' },
+                                            { header: 'Account Name', key: 'accountName' },
+                                            { header: 'Campaign Name', key: 'campaignName' },
+                                            { header: 'Budget', key: 'budget' },
+                                        ],
+                                        data: campaignAudit.underBudget.map((d: any, idx: number) => ({ index: idx + 1, ...d })),
+                                    },
+                                    {
+                                        id: 'campaign-device-negatives',
+                                        name: 'campaign_device_negatives',
+                                        title: 'Campaign Audit - Extreme Device Adjust',
+                                        columns: [
+                                            { header: '#', key: 'index' },
+                                            { header: 'Account Name', key: 'accountName' },
+                                            { header: 'Campaign Name', key: 'campaignName' },
+                                        ],
+                                        data: campaignAudit.deviceNegatives.map((d: any, idx: number) => ({ index: idx + 1, ...d })),
+                                    },
+                                    {
+                                        id: 'campaign-rotate-forever',
+                                        name: 'campaign_rotate_forever',
+                                        title: 'Campaign Audit - Rotate Forever',
+                                        columns: [
+                                            { header: '#', key: 'index' },
+                                            { header: 'Account Name', key: 'accountName' },
+                                            { header: 'Campaign Name', key: 'campaignName' },
+                                        ],
+                                        data: campaignAudit.rotateForever.map((d: any, idx: number) => ({ index: idx + 1, ...d })),
+                                    },
+                                    {
+                                        id: 'campaign-low-cpc',
+                                        name: 'campaign_low_cpc',
+                                        title: 'Campaign Audit - Low Max CPC',
+                                        columns: [
+                                            { header: '#', key: 'index' },
+                                            { header: 'Account Name', key: 'accountName' },
+                                            { header: 'Campaign Name', key: 'campaignName' },
+                                            { header: 'Max CPC', key: 'maxCpc' },
+                                        ],
+                                        data: campaignAudit.lowCpc.map((d: any, idx: number) => ({ index: idx + 1, ...d })),
+                                    },
+                                    {
+                                        id: 'campaign-low-opti',
+                                        name: 'campaign_low_opti_score',
+                                        title: 'Campaign Audit - Low Opti Score',
+                                        columns: [
+                                            { header: '#', key: 'index' },
+                                            { header: 'Account Name', key: 'accountName' },
+                                            { header: 'Campaign Name', key: 'campaignName' },
+                                            { header: 'Opti Score', key: 'optiScore' },
+                                        ],
+                                        data: campaignAudit.lowOpti.map((d: any, idx: number) => ({ index: idx + 1, ...d })),
+                                    },
+                                    {
+                                        id: 'campaign-display-select',
+                                        name: 'campaign_display_select',
+                                        title: 'Campaign Audit - Display Select ON',
+                                        columns: [
+                                            { header: '#', key: 'index' },
+                                            { header: 'Account Name', key: 'accountName' },
+                                            { header: 'Campaign Name', key: 'campaignName' },
+                                        ],
+                                        data: campaignAudit.displaySelect.map((d: any, idx: number) => ({ index: idx + 1, ...d })),
+                                    },
+                                    {
+                                        id: 'campaign-disapproved',
+                                        name: 'campaign_policy_violations',
+                                        title: 'Campaign Audit - Policy Violations',
+                                        columns: [
+                                            { header: '#', key: 'index' },
+                                            { header: 'Account Name', key: 'accountName' },
+                                            { header: 'Campaign Name', key: 'campaignName' },
+                                        ],
+                                        data: campaignAudit.disapproved.map((d: any, idx: number) => ({ index: idx + 1, ...d })),
+                                    },
+                                    {
+                                        id: 'campaign-zero-ads',
+                                        name: 'campaign_zero_ads',
+                                        title: 'Campaign Audit - Zero Active Ads',
+                                        columns: [
+                                            { header: '#', key: 'index' },
+                                            { header: 'Account Name', key: 'accountName' },
+                                            { header: 'Campaign Name', key: 'campaignName' },
+                                        ],
+                                        data: campaignAudit.zeroAds.map((d: any, idx: number) => ({ index: idx + 1, ...d })),
+                                    },
+                                    {
+                                        id: 'campaign-lang-mismatch',
+                                        name: 'campaign_language_mismatch',
+                                        title: 'Campaign Audit - Language Mismatch',
+                                        columns: [
+                                            { header: '#', key: 'index' },
+                                            { header: 'Account Name', key: 'accountName' },
+                                            { header: 'Campaign Name', key: 'campaignName' },
+                                        ],
+                                        data: campaignAudit.langMismatch.map((d: any, idx: number) => ({ index: idx + 1, ...d })),
+                                    },
+                                ]}
+                            />
                             <div className="w-56">
                                 <MultiSelect label="Filter PM" options={uniquePMs} selected={campaignFilterPM} onChange={setCampaignFilterPM} darkMode={darkMode} />
                             </div>
                             {campaignAudit.latestDate && (
-                                <div className={clsx("px-4 py-2 rounded-2xl border flex items-center gap-3 self-end md:self-auto", darkMode ? "bg-white/5 border-white/10" : "bg-white border-gray-200 shadow-sm")}>
-                                    <div className="w-2 h-2 rounded-full bg-blue-500 animate-pulse"></div>
-                                    <div className="flex flex-col">
-                                        <span className="text-[10px] font-black uppercase opacity-40 leading-none">Latest Snapshot</span>
-                                        <span className="text-sm font-black tracking-tight leading-normal uppercase">{campaignAudit.latestDate}</span>
+                                <div>
+                                    <label className="block text-xs mb-1 ml-1 opacity-0 pointer-events-none">Date</label>
+                                    <div className={clsx("px-4 py-2 rounded-2xl border flex items-center gap-3", darkMode ? "bg-white/5 border-white/10" : "bg-white border-gray-200 shadow-sm")}>
+                                        <div className="w-2 h-2 rounded-full bg-blue-500 animate-pulse"></div>
+                                        <div className="flex flex-col">
+                                            <span className="text-[10px] font-black uppercase opacity-40 leading-none">Latest Snapshot</span>
+                                            <span className="text-sm font-black tracking-tight leading-normal uppercase">{campaignAudit.latestDate}</span>
+                                        </div>
                                     </div>
                                 </div>
                             )}
@@ -2875,38 +3353,61 @@ export default function Dashboard() {
 
                     {/* PM Summary heatmap style table */}
                     <div className={clsx("overflow-hidden rounded-3xl border shadow-xl relative", cardClass)}>
-                        <div className={clsx("p-4 border-b text-[10px] font-black uppercase tracking-[0.2em] text-center", darkMode ? "border-white/10 bg-white/5 opacity-60" : "border-gray-200 bg-gray-50 text-gray-700")}>
-                            Manager Infrastructure Summary
+                        <div className={clsx("p-4 border-b flex items-center justify-between", darkMode ? "border-white/10 bg-white/5" : "border-gray-200 bg-gray-50")}>
+                            <span className={clsx("text-[10px] font-black uppercase tracking-[0.2em]", darkMode ? "opacity-60" : "text-gray-700")}>Manager Infrastructure Summary</span>
+                            <ExportButton
+                                filename="campaign-audit-pm-summary"
+                                title="Campaign Audit - Manager Summary"
+                                columns={[
+                                    { header: 'Manager', key: 'pm' },
+                                    { header: 'Total Campaigns', key: 'totalCampaigns' },
+                                    { header: 'Budget', key: 'budget' },
+                                    { header: 'Device', key: 'device' },
+                                    { header: 'Rotation', key: 'rotate' },
+                                    { header: 'Max CPC', key: 'cpc' },
+                                    { header: 'Opti Score', key: 'opti' },
+                                    { header: 'Display', key: 'display' },
+                                    { header: 'Policy', key: 'disapproved' },
+                                    { header: 'Zero Ads', key: 'ads' },
+                                    { header: 'Lang', key: 'lang' },
+                                ]}
+                                data={campaignAudit.pmSummaryList}
+                                darkMode={darkMode}
+                            />
                         </div>
                         <div className="overflow-x-auto">
-                            <table className="w-full text-center text-xs">
+                            <table className="w-full text-center text-xs table-fixed">
                                 <thead className={clsx("sticky top-0 z-10", darkMode ? "bg-[#111] text-gray-500" : "bg-gray-100 text-gray-600")}>
                                     <tr className="border-b border-white/5 uppercase tracking-tighter text-[12px]">
-                                        <th className="p-1.5 text-left border-r border-white/5">Manager</th>
-                                        <th className="p-1.5">Budget</th>
-                                        <th className="p-1.5">Device</th>
-                                        <th className="p-1.5">Rotation</th>
-                                        <th className="p-1.5">Max CPC</th>
-                                        <th className="p-1.5">Opti Score</th>
-                                        <th className="p-1.5">Display</th>
-                                        <th className="p-1.5">Policy</th>
-                                        <th className="p-1.5">Zero Ads</th>
-                                        <th className="p-1.5">Lang</th>
+                                        <th className="p-1 text-center w-8">#</th>
+                                        <th className="p-1 text-left border-r border-white/5 w-28">Manager</th>
+                                        <th className="p-1 w-20 border-r border-white/5">Total</th>
+                                        <th className="p-1 w-16">Budget</th>
+                                        <th className="p-1 w-16">Device</th>
+                                        <th className="p-1 w-16">Rotation</th>
+                                        <th className="p-1 w-16">Max CPC</th>
+                                        <th className="p-1 w-16">Opti Score</th>
+                                        <th className="p-1 w-16">Display</th>
+                                        <th className="p-1 w-16">Policy</th>
+                                        <th className="p-1 w-16">Zero Ads</th>
+                                        <th className="p-1 w-16">Lang</th>
                                     </tr>
                                 </thead>
                                 <tbody className="divide-y divide-white/5">
-                                    {campaignAudit.pmSummaryList.map((s: { pm: string; budget: number; device: number; rotate: number; bidding: number; cpc: number; opti: number; display: number; disapproved: number; ads: number; lang: number; }, idx: number) => (
+                                    {campaignAudit.pmSummaryList.map((s: { pm: string; totalCampaigns: number; budget: number; device: number; rotate: number; bidding: number; cpc: number; opti: number; display: number; disapproved: number; ads: number; lang: number; }, idx: number) => (
                                         <tr key={idx} className={trHover}>
-                                            <td className="p-1.5 text-left border-r border-white/5 font-bold uppercase truncate max-w-[150px]">{s.pm}</td>
-                                            <td className={clsx("p-1.5 font-mono font-black", s.budget > 0 ? "bg-red-500/10 text-red-500" : "opacity-05")}>{s.budget}</td>
-                                            <td className={clsx("p-1.5 font-mono font-black", s.device > 0 ? "bg-orange-500/10 text-orange-500" : "opacity-05")}>{s.device}</td>
-                                            <td className={clsx("p-1.5 font-mono font-black", s.rotate > 0 ? "bg-red-500/10 text-red-500" : "opacity-05")}>{s.rotate}</td>
-                                            <td className={clsx("p-1.5 font-mono font-black", s.cpc > 0 ? "bg-blue-500/10 text-blue-500" : "opacity-05")}>{s.cpc}</td>
-                                            <td className={clsx("p-1.5 font-mono font-black", s.opti > 0 ? "bg-orange-500/10 text-orange-500" : "opacity-05")}>{s.opti}</td>
-                                            <td className={clsx("p-1.5 font-mono font-black", s.display > 0 ? "bg-red-500/10 text-red-500" : "opacity-05")}>{s.display}</td>
-                                            <td className={clsx("p-1.5 font-mono font-black", s.disapproved > 0 ? "bg-red-500/10 text-red-500" : "opacity-05")}>{s.disapproved}</td>
-                                            <td className={clsx("p-1.5 font-mono font-black", s.ads > 0 ? "bg-red-500/10 text-red-500" : "opacity-05")}>{s.ads}</td>
-                                            <td className={clsx("p-1.5 font-mono font-black", s.lang > 0 ? "bg-purple-500/10 text-purple-500" : "opacity-05")}>{s.lang}</td>
+                                            <td className="p-1 text-center opacity-30 font-mono text-[10px]">{idx + 1}</td>
+                                            <td className="p-1 text-left border-r border-white/5 font-bold capitalize truncate">{s.pm.toLowerCase()}</td>
+                                            <td className="p-1 font-mono font-black border-r border-white/5 text-blue-400">{s.totalCampaigns || 0}</td>
+                                            <td className={clsx("p-1 font-mono font-black", s.budget > 0 ? "bg-red-500/10 text-red-500" : "opacity-05")}>{s.budget}</td>
+                                            <td className={clsx("p-1 font-mono font-black", s.device > 0 ? "bg-orange-500/10 text-orange-500" : "opacity-05")}>{s.device}</td>
+                                            <td className={clsx("p-1 font-mono font-black", s.rotate > 0 ? "bg-red-500/10 text-red-500" : "opacity-05")}>{s.rotate}</td>
+                                            <td className={clsx("p-1 font-mono font-black", s.cpc > 0 ? "bg-blue-500/10 text-blue-500" : "opacity-05")}>{s.cpc}</td>
+                                            <td className={clsx("p-1 font-mono font-black", s.opti > 0 ? "bg-orange-500/10 text-orange-500" : "opacity-05")}>{s.opti}</td>
+                                            <td className={clsx("p-1 font-mono font-black", s.display > 0 ? "bg-red-500/10 text-red-500" : "opacity-05")}>{s.display}</td>
+                                            <td className={clsx("p-1 font-mono font-black", s.disapproved > 0 ? "bg-red-500/10 text-red-500" : "opacity-05")}>{s.disapproved}</td>
+                                            <td className={clsx("p-1 font-mono font-black", s.ads > 0 ? "bg-red-500/10 text-red-500" : "opacity-05")}>{s.ads}</td>
+                                            <td className={clsx("p-1 font-mono font-black", s.lang > 0 ? "bg-purple-500/10 text-purple-500" : "opacity-05")}>{s.lang}</td>
                                         </tr>
                                     ))}
                                 </tbody>
@@ -2935,27 +3436,43 @@ export default function Dashboard() {
                                         </div>
                                         <h3 className="text-xl font-black tracking-tight uppercase">{section.title}</h3>
                                     </div>
-                                    <span className="text-[10px] font-black opacity-30 uppercase tracking-[0.3em]">{section.data.length} Flagged</span>
+                                    <div className="flex items-center gap-4">
+                                        <span className="text-[10px] font-black opacity-30 uppercase tracking-[0.3em]">{section.data.length} Flagged</span>
+                                        <ExportButton
+                                            filename={`campaign-${section.title.toLowerCase().replace(/\s+/g, '-').replace(/[()/$%]/g, '')}`}
+                                            title={`Campaign Health - ${section.title}`}
+                                            columns={[
+                                                { header: 'Account Name', key: 'accountName' },
+                                                { header: 'Campaign Name', key: 'campaignName' },
+                                                { header: 'Issue Trigger', key: 'reason' },
+                                                { header: 'Manager', key: 'pm' },
+                                            ]}
+                                            data={section.data}
+                                            darkMode={darkMode}
+                                        />
+                                    </div>
                                 </div>
                                 <div className={clsx("rounded-[2rem] border shadow-2xl relative overflow-hidden", cardClass)}>
                                     <div className="max-h-[500px] overflow-y-auto overflow-x-auto scrollbar-thin scrollbar-thumb-white/10">
                                         <table className="w-full text-left text-xs border-collapse">
                                             <thead className={clsx("sticky top-0 z-20 font-black uppercase tracking-widest text-[10px]", darkMode ? "bg-[#0a0a0a] text-gray-500" : "bg-gray-50 text-gray-600")}>
                                                 <tr>
-                                                    <th className="p-4 pl-8">Account Name</th>
-                                                    <th className="p-4">Campaign Name</th>
-                                                    <th className="p-4">Issue Trigger</th>
-                                                    <th className="p-4 pr-8 text-right">Manager</th>
+                                                    <th className="p-2 pl-6 text-center w-12">#</th>
+                                                    <th className="p-2">Account Name</th>
+                                                    <th className="p-2">Campaign Name</th>
+                                                    <th className="p-2">Issue Trigger</th>
+                                                    <th className="p-2 pr-6 text-right">Manager</th>
                                                 </tr>
                                             </thead>
                                             <tbody className="divide-y divide-white/5">
                                                 {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
                                                 {section.data.map((row: any, i: number) => (
                                                     <tr key={i} className={clsx("transition-colors group", trHover)}>
-                                                        <td className="p-4 pl-8 font-black text-sm max-w-[250px] truncate">{row.accountName}</td>
-                                                        <td className="p-4 opacity-70 font-mono text-[11px] truncate max-w-[400px]">{row.campaignName}</td>
-                                                        <td className="p-4 font-bold text-red-400">{row.reason}</td>
-                                                        <td className="p-4 pr-8 text-right opacity-30 font-black tracking-tighter uppercase text-[10px] whitespace-nowrap">{row.pm}</td>
+                                                        <td className="p-2 pl-6 text-center opacity-30 font-mono text-[10px]">{i + 1}</td>
+                                                        <td className="p-2 font-black text-sm max-w-[250px] truncate">{row.accountName}</td>
+                                                        <td className="p-2 opacity-70 font-mono text-[11px] truncate max-w-[400px]">{row.campaignName}</td>
+                                                        <td className="p-2 font-bold text-red-400">{row.reason}</td>
+                                                        <td className="p-2 pr-6 text-right opacity-30 font-black tracking-tighter uppercase text-[10px] whitespace-nowrap">{row.pm}</td>
                                                     </tr>
                                                 ))}
                                             </tbody>
@@ -3167,12 +3684,12 @@ export default function Dashboard() {
 
             {/* Dashboard Footer */}
             <footer className="mt-20 py-8 border-t border-white/5 flex flex-col items-center gap-2">
-                <div className={clsx("text-sm font-bold opacity-30 tracking-tight", textMuted)}>
+                <div className={clsx("text-sm font-bold opacity-60 tracking-tight", darkMode ? "text-white" : "text-gray-900")}>
                     &copy; EME Paid Media Team 2026
                 </div>
                 <div className="flex items-center gap-2">
-                    <span className="w-1.5 h-1.5 rounded-full bg-purple-500/40"></span>
-                    <a href="mailto:paidmedia@emarketingeye.com" className={clsx("text-[11px] font-medium opacity-20 hover:opacity-100 transition-opacity underline-offset-4 hover:underline decoration-purple-500/50", textMuted)}>
+                    <span className="w-1.5 h-1.5 rounded-full bg-purple-500"></span>
+                    <a href="mailto:paidmedia@emarketingeye.com" className={clsx("text-[11px] font-medium opacity-50 hover:opacity-100 transition-opacity underline-offset-4 hover:underline decoration-purple-500", darkMode ? "text-purple-300" : "text-purple-600")}>
                         paidmedia@emarketingeye.com
                     </a>
                 </div>
