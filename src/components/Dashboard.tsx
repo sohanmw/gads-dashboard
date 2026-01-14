@@ -5,7 +5,7 @@ import { motion } from 'framer-motion';
 import { RefreshCcw, Filter, Activity, AlertTriangle, CheckCircle2, TrendingUp, TrendingDown, Users, Layers, Sun, Moon, Target, User, Globe, Trophy, Sparkles, Zap } from 'lucide-react';
 import { clsx } from 'clsx';
 import Image from 'next/image';
-import { ManagementData, BudgetData, MonthlyTotalData } from '@/lib/types';
+import { ManagementData, BudgetData, MonthlyTotalData, PMCIDData } from '@/lib/types';
 
 import { MultiSelect } from './MultiSelect';
 import { ExportButton } from './ExportButton';
@@ -14,8 +14,9 @@ import { DateRangePicker } from './DateRangePicker';
 import { DateSelector } from './DateSelector';
 import {
     XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
-    AreaChart, Area, ScatterChart, Scatter, ZAxis, Cell, BarChart, Bar
+    AreaChart, Area, ScatterChart, Scatter, ZAxis, Cell, BarChart, Bar, PieChart, Pie, Legend
 } from 'recharts';
+import { convertToUSDSync } from '@/lib/exchangeRates';
 
 const EXCLUDED_PMS = ["Google Ads Account in No Use", "Not Managed by EME", "Paused/Ended"];
 
@@ -213,6 +214,10 @@ export default function Dashboard() {
     const [pmData, setPmData] = useState<{ pm: string, status: string }[]>([]);
     const [pmSheetUrl, setPmSheetUrl] = useState('https://docs.google.com/spreadsheets/d/e/2PACX-1vTeQRJT07I2RDj-RMPHSDkwJ_DI7B5apB4g36zBNSNQUCNO8t261H1QkSudY1IW6Tul-2gyMFZ2s7YB/pub?gid=1995902069&single=true&output=csv');
 
+    // PM&CID Data State (for currency mapping)
+    const [pmCidData, setPmCidData] = useState<PMCIDData[]>([]);
+    const [pmCidSheetUrl] = useState('https://docs.google.com/spreadsheets/d/e/2PACX-1vTeQRJT07I2RDj-RMPHSDkwJ_DI7B5apB4g36zBNSNQUCNO8t261H1QkSudY1IW6Tul-2gyMFZ2s7YB/pub?gid=1305977821&single=true&output=csv');
+
     // Monthly Historical Data State
     const [monthlyData, setMonthlyData] = useState<MonthlyTotalData[]>([]);
     const [monthlySheetUrl, setMonthlySheetUrl] = useState('https://docs.google.com/spreadsheets/d/e/2PACX-1vTeQRJT07I2RDj-RMPHSDkwJ_DI7B5apB4g36zBNSNQUCNO8t261H1QkSudY1IW6Tul-2gyMFZ2s7YB/pub?gid=884280652&single=true&output=csv');
@@ -270,6 +275,7 @@ export default function Dashboard() {
     const [audienceSelectedDate, setAudienceSelectedDate] = useState<string>('');
     const [campaignFilterPM, setCampaignFilterPM] = useState<string[]>([]);
     const [campaignSelectedDate, setCampaignSelectedDate] = useState<string>('');
+    const [dailyTrendView, setDailyTrendView] = useState<'daily' | 'cumulative'>('daily');
 
     // Sorting State (Monthly)
     const [monthlySortField, setMonthlySortField] = useState<string>('accountName');
@@ -333,7 +339,7 @@ export default function Dashboard() {
     const uniqueMonthlyMonths = Array.from(new Set(monthlyData.map(i => i.month).filter(Boolean))).sort((a, b) => parseMonthString(a).getTime() - parseMonthString(b).getTime());
 
     // -- Fetch Logic --
-    const fetchBridgeData = async (url: string, mode: 'management' | 'budget' | 'pm' | 'monthly' | 'daily' | 'audience' | 'campaign') => {
+    const fetchBridgeData = async (url: string, mode: 'management' | 'budget' | 'pm' | 'pmcid' | 'monthly' | 'daily' | 'audience' | 'campaign') => {
         if (!url) return;
         setLoading(true);
         const EXCLUDED_PMS = ["Google Ads Account in No Use", "Not Managed by EME", "Paused/Ended"];
@@ -400,6 +406,8 @@ export default function Dashboard() {
                     setAudienceData(json.data);
                 } else if (mode === 'campaign') {
                     setCampaignAuditData(json.data);
+                } else if (mode === 'pmcid') {
+                    setPmCidData(json.data);
                 }
             }
         } catch (e) {
@@ -413,6 +421,7 @@ export default function Dashboard() {
         fetchBridgeData(sheetUrl, 'management');
         fetchBridgeData(budgetSheetUrl, 'budget');
         fetchBridgeData(pmSheetUrl, 'pm');
+        fetchBridgeData(pmCidSheetUrl, 'pmcid');
         fetchBridgeData(monthlySheetUrl, 'monthly');
         fetchBridgeData(dailySheetUrl, 'daily');
         fetchBridgeData(audienceSheetUrl, 'audience');
@@ -424,6 +433,7 @@ export default function Dashboard() {
         fetchBridgeData(sheetUrl, 'management');
         fetchBridgeData(budgetSheetUrl, 'budget');
         fetchBridgeData(pmSheetUrl, 'pm');
+        fetchBridgeData(pmCidSheetUrl, 'pmcid');
         fetchBridgeData(monthlySheetUrl, 'monthly');
         fetchBridgeData(dailySheetUrl, 'daily');
         fetchBridgeData(audienceSheetUrl, 'audience');
@@ -441,6 +451,141 @@ export default function Dashboard() {
         const matchStrategist = filterStrategist.length === 0 || filterStrategist.includes(item.strategist);
         return matchPM && matchTeam && matchAccount && matchClient && matchObjective && matchType && matchStrategist;
     }), [data, filterPM, filterTeam, filterAccountName, filterClientAccount, filterObjective, filterType, filterStrategist]);
+
+    // Geographic Distribution Data
+    const geographicData = useMemo(() => {
+        // Country to region mapping (comprehensive)
+        const countryToRegion: Record<string, string> = {
+            // North America
+            'USA': 'North America', 'United States': 'North America', 'Canada': 'North America', 'Mexico': 'North America',
+
+            // Europe
+            'UK': 'Europe', 'United Kingdom': 'Europe', 'Germany': 'Europe', 'France': 'Europe', 'Spain': 'Europe', 'Italy': 'Europe',
+            'Netherlands': 'Europe', 'Belgium': 'Europe', 'Switzerland': 'Europe', 'Austria': 'Europe',
+            'Poland': 'Europe', 'Sweden': 'Europe', 'Norway': 'Europe', 'Denmark': 'Europe', 'Finland': 'Europe',
+            'Ireland': 'Europe', 'Portugal': 'Europe', 'Greece': 'Europe', 'Czech Republic': 'Europe', 'Hungary': 'Europe',
+            'Romania': 'Europe', 'Bulgaria': 'Europe', 'Croatia': 'Europe', 'Serbia': 'Europe', 'Slovakia': 'Europe',
+            'Slovenia': 'Europe', 'Estonia': 'Europe', 'Latvia': 'Europe', 'Lithuania': 'Europe', 'Iceland': 'Europe',
+            'Luxembourg': 'Europe', 'Malta': 'Europe', 'Cyprus': 'Europe',
+
+            // Oceania
+            'Australia': 'Oceania', 'New Zealand': 'Oceania', 'Fiji': 'Oceania', 'Papua New Guinea': 'Oceania',
+
+            // Asia
+            'India': 'Asia', 'China': 'Asia', 'Japan': 'Asia', 'Singapore': 'Asia', 'South Korea': 'Asia', 'Korea': 'Asia',
+            'Thailand': 'Asia', 'Malaysia': 'Asia', 'Indonesia': 'Asia', 'Philippines': 'Asia', 'Vietnam': 'Asia',
+            'Sri Lanka': 'Asia', 'Bangladesh': 'Asia', 'Pakistan': 'Asia', 'Nepal': 'Asia', 'Myanmar': 'Asia',
+            'Cambodia': 'Asia', 'Laos': 'Asia', 'Taiwan': 'Asia', 'Hong Kong': 'Asia', 'Macau': 'Asia',
+            'Mongolia': 'Asia', 'Brunei': 'Asia', 'Maldives': 'Asia', 'Bhutan': 'Asia',
+
+            // Middle East
+            'UAE': 'Middle East', 'United Arab Emirates': 'Middle East', 'Saudi Arabia': 'Middle East',
+            'Qatar': 'Middle East', 'Kuwait': 'Middle East', 'Bahrain': 'Middle East', 'Oman': 'Middle East',
+            'Israel': 'Middle East', 'Jordan': 'Middle East', 'Lebanon': 'Middle East', 'Iraq': 'Middle East',
+            'Iran': 'Middle East', 'Turkey': 'Middle East', 'Yemen': 'Middle East', 'Syria': 'Middle East',
+
+            // Africa
+            'South Africa': 'Africa', 'Nigeria': 'Africa', 'Kenya': 'Africa', 'Egypt': 'Africa',
+            'Morocco': 'Africa', 'Tunisia': 'Africa', 'Algeria': 'Africa', 'Libya': 'Africa',
+            'Ghana': 'Africa', 'Ethiopia': 'Africa', 'Tanzania': 'Africa', 'Uganda': 'Africa',
+            'Zambia': 'Africa', 'Zimbabwe': 'Africa', 'Botswana': 'Africa', 'Namibia': 'Africa',
+            'Mauritius': 'Africa', 'Seychelles': 'Africa', 'Reunion': 'Africa', 'Madagascar': 'Africa',
+            'Mozambique': 'Africa', 'Angola': 'Africa', 'Senegal': 'Africa', 'Ivory Coast': 'Africa',
+            'Cameroon': 'Africa', 'Rwanda': 'Africa', 'Malawi': 'Africa',
+
+            // South America
+            'Brazil': 'South America', 'Argentina': 'South America', 'Chile': 'South America', 'Colombia': 'South America',
+            'Peru': 'South America', 'Venezuela': 'South America', 'Ecuador': 'South America', 'Bolivia': 'South America',
+            'Uruguay': 'South America', 'Paraguay': 'South America', 'Guyana': 'South America', 'Suriname': 'South America',
+
+            // Central America & Caribbean
+            'Costa Rica': 'Central America', 'Panama': 'Central America', 'Guatemala': 'Central America',
+            'Honduras': 'Central America', 'Nicaragua': 'Central America', 'El Salvador': 'Central America',
+            'Belize': 'Central America', 'Jamaica': 'Central America', 'Trinidad and Tobago': 'Central America',
+            'Barbados': 'Central America', 'Bahamas': 'Central America', 'Dominican Republic': 'Central America',
+            'Puerto Rico': 'Central America', 'Cuba': 'Central America', 'Haiti': 'Central America',
+        };
+
+        // Country flag emojis
+        const countryFlags: Record<string, string> = {
+            // North America
+            'USA': '🇺🇸', 'United States': '🇺🇸', 'Canada': '🇨🇦', 'Mexico': '🇲🇽',
+
+            // Europe
+            'UK': '🇬🇧', 'United Kingdom': '🇬🇧', 'Germany': '🇩🇪', 'France': '🇫🇷', 'Spain': '🇪🇸', 'Italy': '🇮🇹',
+            'Netherlands': '🇳🇱', 'Belgium': '🇧🇪', 'Switzerland': '🇨🇭', 'Austria': '🇦🇹',
+            'Poland': '🇵🇱', 'Sweden': '🇸🇪', 'Norway': '🇳🇴', 'Denmark': '🇩🇰', 'Finland': '🇫🇮',
+            'Ireland': '🇮🇪', 'Portugal': '🇵🇹', 'Greece': '🇬🇷', 'Czech Republic': '🇨🇿', 'Hungary': '🇭🇺',
+            'Romania': '🇷🇴', 'Bulgaria': '🇧🇬', 'Croatia': '🇭🇷', 'Serbia': '🇷🇸', 'Slovakia': '🇸🇰',
+            'Slovenia': '🇸🇮', 'Estonia': '🇪🇪', 'Latvia': '🇱🇻', 'Lithuania': '🇱🇹', 'Iceland': '🇮🇸',
+            'Luxembourg': '🇱🇺', 'Malta': '🇲🇹', 'Cyprus': '🇨🇾',
+
+            // Oceania
+            'Australia': '🇦🇺', 'New Zealand': '🇳🇿', 'Fiji': '🇫🇯', 'Papua New Guinea': '🇵🇬',
+
+            // Asia
+            'India': '🇮🇳', 'China': '🇨🇳', 'Japan': '🇯🇵', 'Singapore': '🇸🇬', 'South Korea': '🇰🇷', 'Korea': '🇰🇷',
+            'Thailand': '🇹🇭', 'Malaysia': '🇲🇾', 'Indonesia': '🇮🇩', 'Philippines': '🇵🇭', 'Vietnam': '🇻🇳',
+            'Sri Lanka': '🇱🇰', 'Bangladesh': '🇧🇩', 'Pakistan': '🇵🇰', 'Nepal': '🇳🇵', 'Myanmar': '🇲🇲',
+            'Cambodia': '🇰🇭', 'Laos': '🇱🇦', 'Taiwan': '🇹🇼', 'Hong Kong': '🇭🇰', 'Macau': '🇲🇴',
+            'Mongolia': '🇲🇳', 'Brunei': '🇧🇳', 'Maldives': '🇲🇻', 'Bhutan': '🇧🇹',
+
+            // Middle East
+            'UAE': '🇦🇪', 'United Arab Emirates': '🇦🇪', 'Saudi Arabia': '🇸🇦', 'Qatar': '🇶🇦', 'Kuwait': '🇰🇼',
+            'Bahrain': '🇧🇭', 'Oman': '🇴🇲', 'Israel': '🇮🇱', 'Jordan': '🇯🇴', 'Lebanon': '🇱🇧',
+            'Iraq': '🇮🇶', 'Iran': '🇮🇷', 'Turkey': '🇹🇷', 'Yemen': '🇾🇪', 'Syria': '🇸🇾',
+
+            // Africa
+            'South Africa': '🇿🇦', 'Nigeria': '🇳🇬', 'Kenya': '🇰🇪', 'Egypt': '🇪🇬',
+            'Morocco': '🇲🇦', 'Tunisia': '🇹🇳', 'Algeria': '🇩🇿', 'Libya': '🇱🇾',
+            'Ghana': '🇬🇭', 'Ethiopia': '🇪🇹', 'Tanzania': '🇹🇿', 'Uganda': '🇺🇬',
+            'Zambia': '🇿🇲', 'Zimbabwe': '🇿🇼', 'Botswana': '🇧🇼', 'Namibia': '🇳🇦',
+            'Mauritius': '🇲🇺', 'Seychelles': '🇸🇨', 'Reunion': '🇷🇪', 'Madagascar': '🇲🇬',
+            'Mozambique': '🇲🇿', 'Angola': '🇦🇴', 'Senegal': '🇸🇳', 'Ivory Coast': '🇨🇮',
+            'Cameroon': '🇨🇲', 'Rwanda': '🇷🇼', 'Malawi': '🇲🇼',
+
+            // South America
+            'Brazil': '🇧🇷', 'Argentina': '🇦🇷', 'Chile': '🇨🇱', 'Colombia': '🇨🇴',
+            'Peru': '🇵🇪', 'Venezuela': '🇻🇪', 'Ecuador': '🇪🇨', 'Bolivia': '🇧🇴',
+            'Uruguay': '🇺🇾', 'Paraguay': '🇵🇾', 'Guyana': '🇬🇾', 'Suriname': '🇸🇷',
+
+            // Central America & Caribbean
+            'Costa Rica': '🇨🇷', 'Panama': '🇵🇦', 'Guatemala': '🇬🇹', 'Honduras': '🇭🇳',
+            'Nicaragua': '🇳🇮', 'El Salvador': '🇸🇻', 'Belize': '🇧🇿', 'Jamaica': '🇯🇲',
+            'Trinidad and Tobago': '🇹🇹', 'Barbados': '🇧🇧', 'Bahamas': '🇧🇸',
+            'Dominican Republic': '🇩🇴', 'Puerto Rico': '🇵🇷', 'Cuba': '🇨🇺', 'Haiti': '🇭🇹',
+        };
+
+        const countryCount: Record<string, number> = {};
+        const regionCount: Record<string, number> = {};
+
+        filteredData.forEach(item => {
+            const country = item.country || 'Unknown';
+            countryCount[country] = (countryCount[country] || 0) + 1;
+
+            const region = countryToRegion[country] || 'Other';
+            regionCount[region] = (regionCount[region] || 0) + 1;
+        });
+
+        const totalAccounts = filteredData.length;
+
+        const countries = Object.entries(countryCount)
+            .map(([name, count]) => ({
+                name,
+                count,
+                region: countryToRegion[name] || 'Other',
+                flag: countryFlags[name] || '🌍',
+                displayName: `${countryFlags[name] || '🌍'} ${name}`,
+                percentage: totalAccounts > 0 ? Math.ceil((count / totalAccounts) * 100).toString() : '0'
+            }))
+            .sort((a, b) => b.count - a.count);
+
+        const regions = Object.entries(regionCount)
+            .map(([name, count]) => ({ name, count }))
+            .sort((a, b) => b.count - a.count);
+
+        return { countries, regions, totalCountries: countries.length, totalRegions: regions.length };
+    }, [filteredData]);
 
     // -- Filter Logic (Monthly KPI) --
     const filteredMonthlyData = useMemo(() => monthlyData.filter(item => {
@@ -1062,6 +1207,146 @@ export default function Dashboard() {
         });
     }, [filteredDailyData, teamSortField, teamSortOrder]);
 
+    // Daily KPI Trend Data - Status counts by date (uses raw daily data from source)
+    const dailyKpiTrendData = useMemo(() => {
+        const statsByDate: Record<string, { critical: number; low: number; onTrack: number; total: number }> = {};
+
+        // Use raw dailyData from source file and apply filters manually
+        dailyData.forEach(i => {
+            // Apply the same filters as the rest of the page
+            const matchPM = dailyFilterPM.length === 0 || dailyFilterPM.includes(i.pm);
+            const matchAccount = dailyFilterAccount.length === 0 || dailyFilterAccount.includes(i.accountName);
+            const matchClient = dailyFilterClient.length === 0 || dailyFilterClient.includes(i.clientAccount);
+            const matchObjective = dailyFilterObjective.length === 0 || dailyFilterObjective.includes(i.objective);
+            const matchStatus = dailyFilterStatus.length === 0 || dailyFilterStatus.includes(calculateKpiStatus(i));
+            const isNotExcluded = !EXCLUDED_PMS.includes(i.pm);
+
+            if (matchPM && matchAccount && matchClient && matchObjective && matchStatus && isNotExcluded && i.month) {
+                // Normalize the date to ensure consistent grouping
+                const parts = i.month.split('/');
+                let normalizedDate = i.month;
+                if (parts.length === 3) {
+                    // DD/MM/YYYY -> normalize to YYYY-MM-DD for consistent grouping
+                    normalizedDate = `${parts[2]}-${parts[1].padStart(2, '0')}-${parts[0].padStart(2, '0')}`;
+                }
+
+                if (!statsByDate[normalizedDate]) {
+                    statsByDate[normalizedDate] = { critical: 0, low: 0, onTrack: 0, total: 0 };
+                }
+                const status = calculateKpiStatus(i);
+                if (status === 'Critical') statsByDate[normalizedDate].critical++;
+                else if (status === 'Low') statsByDate[normalizedDate].low++;
+                else if (status === 'On Track') statsByDate[normalizedDate].onTrack++;
+                statsByDate[normalizedDate].total++;
+            }
+        });
+
+        // Get all unique dates and sort them
+        let allDates = Object.keys(statsByDate).sort();
+
+        // Apply date range filter if set
+        if (dailyStartDate || dailyEndDate) {
+            allDates = allDates.filter(dateStr => {
+                const date = new Date(dateStr);
+                const startOk = !dailyStartDate || date >= new Date(dailyStartDate);
+                const endOk = !dailyEndDate || date <= new Date(dailyEndDate);
+                return startOk && endOk;
+            });
+        }
+
+        console.log('Daily KPI Trend - Sample dates:', allDates.slice(0, 10));
+        console.log('Daily KPI Trend - Total unique dates:', allDates.length);
+
+        if (dailyTrendView === 'cumulative') {
+            // For cumulative view, track the LATEST status of each unique project up to each date
+            // This ensures each project is only counted once in the total
+
+            return allDates.map(dateLabel => {
+                const date = new Date(dateLabel);
+                const formatted = date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+
+                // Track the latest status of each project up to this date
+                const projectLatestStatus: Record<string, string> = {};
+
+                // Process all data up to and including this date
+                dailyData.forEach(i => {
+                    const matchPM = dailyFilterPM.length === 0 || dailyFilterPM.includes(i.pm);
+                    const matchAccount = dailyFilterAccount.length === 0 || dailyFilterAccount.includes(i.accountName);
+                    const matchClient = dailyFilterClient.length === 0 || dailyFilterClient.includes(i.clientAccount);
+                    const matchObjective = dailyFilterObjective.length === 0 || dailyFilterObjective.includes(i.objective);
+                    const matchStatus = dailyFilterStatus.length === 0 || dailyFilterStatus.includes(calculateKpiStatus(i));
+                    const isNotExcluded = !EXCLUDED_PMS.includes(i.pm);
+
+                    if (matchPM && matchAccount && matchClient && matchObjective && matchStatus && isNotExcluded && i.month) {
+                        const parts = i.month.split('/');
+                        let itemDate = i.month;
+                        if (parts.length === 3) {
+                            itemDate = `${parts[2]}-${parts[1].padStart(2, '0')}-${parts[0].padStart(2, '0')}`;
+                        }
+
+                        // Only process data up to current date
+                        if (itemDate <= dateLabel) {
+                            // Use Account Name as unique identifier
+                            const projectId = i.accountName;
+                            const status = calculateKpiStatus(i);
+
+                            // Store or update the latest status for this project
+                            // Later dates will overwrite earlier ones
+                            if (!projectLatestStatus[projectId] || itemDate >= (projectLatestStatus[projectId + '_date'] || '')) {
+                                projectLatestStatus[projectId] = status;
+                                projectLatestStatus[projectId + '_date'] = itemDate;
+                            }
+                        }
+                    }
+                });
+
+                // Count projects by their latest status
+                let critical = 0;
+                let low = 0;
+                let onTrack = 0;
+
+                Object.keys(projectLatestStatus).forEach(key => {
+                    if (key.endsWith('_date')) return; // Skip date tracking keys
+                    const status = projectLatestStatus[key];
+                    if (status === 'Critical') critical++;
+                    else if (status === 'Low') low++;
+                    else if (status === 'On Track') onTrack++;
+                });
+
+                return {
+                    date: formatted,
+                    critical,
+                    low,
+                    onTrack,
+                    total: critical + low + onTrack
+                };
+            });
+        } else {
+            // Daily view - counts for that specific day
+            return allDates.map(dateLabel => {
+                const stats = statsByDate[dateLabel] || { critical: 0, low: 0, onTrack: 0, total: 0 };
+                const date = new Date(dateLabel);
+                const formatted = date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+
+                return {
+                    date: formatted,
+                    ...stats
+                };
+            });
+        }
+    }, [dailyData, dailyFilterPM, dailyFilterAccount, dailyFilterClient, dailyFilterObjective, dailyFilterStatus, dailyTrendView, dailyStartDate, dailyEndDate]);
+
+    // Currency mapping from PM&CID data
+    const currencyMap = useMemo(() => {
+        const map: Record<string, string> = {};
+        pmCidData.forEach(item => {
+            if (item.accountName && item.currency) {
+                map[item.accountName] = item.currency;
+            }
+        });
+        return map;
+    }, [pmCidData]);
+
     const portfolioStats = useMemo(() => {
         const selectedMonths = portfolioFilterMonth.length > 0 ? portfolioFilterMonth : [monthOptions[monthOptions.length - 1] || ''];
         if (selectedMonths.length === 0 || !selectedMonths[0]) return [];
@@ -1106,8 +1391,16 @@ export default function Dashboard() {
 
             const budget = parseFloat(item.monthlyBudget?.toString().replace(/[$,]/g, '') || '0');
             const cost = parseFloat(item.cost?.toString().replace(/[$,]/g, '') || '0');
-            pmStats[pm].totalBudget += isNaN(budget) ? 0 : budget;
-            pmStats[pm].totalCost += isNaN(cost) ? 0 : cost;
+
+            // Get currency for this account (default to USD if not found)
+            const currency = currencyMap[item.accountName] || 'USD';
+
+            // Convert to USD
+            const budgetUSD = convertToUSDSync(isNaN(budget) ? 0 : budget, currency);
+            const costUSD = convertToUSDSync(isNaN(cost) ? 0 : cost, currency);
+
+            pmStats[pm].totalBudget += budgetUSD;
+            pmStats[pm].totalCost += costUSD;
         });
 
         const numMonths = selectedMonths.length;
@@ -1147,7 +1440,7 @@ export default function Dashboard() {
                 return (ot / items.length) * 100;
             })
         })).sort((a, b) => b.globalScore - a.globalScore);
-    }, [monthlyData, monthOptions, portfolioFilterMonth, portfolioFilterTeam, portfolioFilterStrategist, campaignAudit, audienceAudit]);
+    }, [monthlyData, monthOptions, portfolioFilterMonth, portfolioFilterTeam, portfolioFilterStrategist, campaignAudit, audienceAudit, currencyMap]);
 
     const portfolioTrendData = useMemo(() => {
         const selectedMonths = portfolioFilterMonth.length > 0 ? portfolioFilterMonth : [monthOptions[monthOptions.length - 1] || ''];
@@ -1359,6 +1652,19 @@ export default function Dashboard() {
     }, {} as Record<string, { pm: string, exhaustions: number, distinctAccounts: Set<string> }>))
         .map(stat => ({ ...stat, distinctAccounts: stat.distinctAccounts.size }))
         .sort((a, b) => b.exhaustions - a.exhaustions), [filteredBudgetData]);
+
+    // Budget Statistics - Sum from PM Summary Stats
+    const budgetStats = useMemo(() => {
+        const totalExhaustions = pmSummaryStats.reduce((sum, stat) => sum + stat.exhaustions, 0);
+        const totalAccounts = pmSummaryStats.reduce((sum, stat) => sum + (stat.distinctAccounts as number), 0);
+        const totalPMs = pmSummaryStats.length;
+
+        return {
+            exhaustions: totalExhaustions,
+            accounts: totalAccounts,
+            pms: totalPMs,
+        };
+    }, [pmSummaryStats]);
 
     // Filter Active PMs
     const activePMs = useMemo(() => new Set(pmData
@@ -1589,31 +1895,6 @@ export default function Dashboard() {
             {/* View Content */}
             {activeTab === 'management' ? (
                 <div className="animate-in fade-in duration-500">
-                    {/* Scorecards */}
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-                        <div className={clsx("border p-6 rounded-2xl", cardClass)}>
-                            <div className="flex items-center gap-3 mb-2 text-blue-400">
-                                <Target className="w-5 h-5" />
-                                <h3 className="font-medium text-sm uppercase tracking-wide">Total Accounts</h3>
-                            </div>
-                            <p className="text-3xl font-bold">{totalAccounts}</p>
-                        </div>
-                        <div className={clsx("border p-6 rounded-2xl", cardClass)}>
-                            <div className="flex items-center gap-3 mb-2 text-purple-400">
-                                <User className="w-5 h-5" />
-                                <h3 className="font-medium text-sm uppercase tracking-wide">Total PMs</h3>
-                            </div>
-                            <p className="text-3xl font-bold">{uniquePMsCount}</p>
-                        </div>
-                        <div className={clsx("border p-6 rounded-2xl", cardClass)}>
-                            <div className="flex items-center gap-3 mb-2 text-pink-400">
-                                <Globe className="w-5 h-5" />
-                                <h3 className="font-medium text-sm uppercase tracking-wide">Total Teams</h3>
-                            </div>
-                            <p className="text-3xl font-bold">{uniqueTeamsCount}</p>
-                        </div>
-                    </div>
-
                     {/* Filters Bar */}
                     {data.length > 0 && (
                         <div className={clsx("flex flex-col gap-4 mb-8 p-6 border rounded-xl relative z-20", cardClass)}>
@@ -1633,6 +1914,31 @@ export default function Dashboard() {
                             </div>
                         </div>
                     )}
+
+                    {/* Scorecards */}
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+                        <StatCard
+                            label="Total Accounts"
+                            value={totalAccounts}
+                            icon={Target}
+                            darkMode={darkMode}
+                            showTrend={false}
+                        />
+                        <StatCard
+                            label="Total PMs"
+                            value={uniquePMsCount}
+                            icon={User}
+                            darkMode={darkMode}
+                            showTrend={false}
+                        />
+                        <StatCard
+                            label="Total Teams"
+                            value={uniqueTeamsCount}
+                            icon={Globe}
+                            darkMode={darkMode}
+                            showTrend={false}
+                        />
+                    </div>
 
                     {/* Main Table */}
                     <div className="flex justify-between items-center mb-4">
@@ -1704,6 +2010,137 @@ export default function Dashboard() {
                                 )}
                             </tbody>
                         </table>
+                    </div>
+
+
+
+                    {/* Geographic Distribution - Enhanced Bar Chart */}
+                    <div className={clsx("mt-12 overflow-hidden rounded-2xl border shadow-xl", cardClass)}>
+                        <div className={clsx("p-6 border-b", darkMode ? "border-white/10 bg-gradient-to-r from-blue-600/10 to-purple-600/10" : "border-gray-200 bg-gradient-to-r from-blue-50 to-purple-50")}>
+                            <div className="flex items-center justify-between">
+                                <div>
+                                    <h3 className="text-xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
+                                        Global Account Distribution
+                                    </h3>
+                                    <p className={clsx("text-sm mt-1", textMuted)}>
+                                        {geographicData.totalCountries} {geographicData.totalCountries === 1 ? 'Country' : 'Countries'} • {filteredData.length} Total Accounts • {geographicData.totalRegions} Regions
+                                    </p>
+                                </div>
+                                <div className={clsx("px-4 py-2 rounded-lg font-bold text-2xl", darkMode ? "bg-blue-600/20 text-blue-400" : "bg-blue-100 text-blue-600")}>
+                                    {filteredData.length}
+                                </div>
+                            </div>
+                        </div>
+                        <div className="p-6">
+                            <div className="w-full" style={{ height: `${Math.max(600, geographicData.countries.length * 25)}px` }}>
+                                <ResponsiveContainer width="100%" height="100%">
+                                    <BarChart
+                                        data={geographicData.countries}
+                                        layout="vertical"
+                                        margin={{ top: 5, right: 40, left: 150, bottom: 5 }}
+                                        barSize={20}
+                                    >
+                                        <defs>
+                                            <linearGradient id="colorGradient1" x1="0" y1="0" x2="1" y2="0">
+                                                <stop offset="0%" stopColor="#3b82f6" stopOpacity={0.9} />
+                                                <stop offset="100%" stopColor="#8b5cf6" stopOpacity={0.9} />
+                                            </linearGradient>
+                                            <linearGradient id="colorGradient2" x1="0" y1="0" x2="1" y2="0">
+                                                <stop offset="0%" stopColor="#6366f1" stopOpacity={0.8} />
+                                                <stop offset="100%" stopColor="#a855f7" stopOpacity={0.8} />
+                                            </linearGradient>
+                                            <linearGradient id="colorGradient3" x1="0" y1="0" x2="1" y2="0">
+                                                <stop offset="0%" stopColor="#8b5cf6" stopOpacity={0.7} />
+                                                <stop offset="100%" stopColor="#ec4899" stopOpacity={0.7} />
+                                            </linearGradient>
+                                            <linearGradient id="colorGradientDefault" x1="0" y1="0" x2="1" y2="0">
+                                                <stop offset="0%" stopColor={darkMode ? "#4b5563" : "#9ca3af"} stopOpacity={0.6} />
+                                                <stop offset="100%" stopColor={darkMode ? "#6b7280" : "#d1d5db"} stopOpacity={0.6} />
+                                            </linearGradient>
+                                        </defs>
+                                        <CartesianGrid
+                                            strokeDasharray="3 3"
+                                            horizontal={false}
+                                            stroke={darkMode ? "rgba(255,255,255,0.05)" : "rgba(0,0,0,0.05)"}
+                                        />
+                                        <XAxis
+                                            type="number"
+                                            axisLine={false}
+                                            tickLine={false}
+                                            tick={{ fontSize: 12, fill: darkMode ? '#9ca3af' : '#6b7280', fontWeight: 600 }}
+                                        />
+                                        <YAxis
+                                            type="category"
+                                            dataKey="displayName"
+                                            axisLine={false}
+                                            tickLine={false}
+                                            tick={{ fontSize: 13, fill: darkMode ? '#d1d5db' : '#374151', fontWeight: 600 }}
+                                            width={160}
+                                            interval={0}
+                                        />
+                                        <Tooltip
+                                            contentStyle={{
+                                                backgroundColor: darkMode ? '#1f2937' : '#ffffff',
+                                                border: darkMode ? '2px solid rgba(59, 130, 246, 0.3)' : '2px solid rgba(59, 130, 246, 0.2)',
+                                                borderRadius: '12px',
+                                                fontSize: '13px',
+                                                fontWeight: 600,
+                                                padding: '12px',
+                                                boxShadow: '0 10px 40px rgba(0,0,0,0.2)'
+                                            }}
+                                            labelStyle={{
+                                                color: darkMode ? '#fff' : '#000',
+                                                fontWeight: 'bold',
+                                                fontSize: '14px',
+                                                marginBottom: '4px'
+                                            }}
+                                            formatter={(value: number | undefined, name: string | undefined, props: any) => {
+                                                if (value === undefined) return ['', ''];
+                                                return [
+                                                    `${value} ${value === 1 ? 'account' : 'accounts'} (${props.payload.percentage}%)`,
+                                                    props.payload.region ? `Region: ${props.payload.region}` : ''
+                                                ];
+                                            }}
+                                        />
+                                        <Bar
+                                            dataKey="count"
+                                            radius={[0, 8, 8, 0]}
+                                            animationDuration={800}
+                                            label={(props: any) => {
+                                                const { x, y, width, height, index } = props;
+                                                const item = geographicData.countries[index];
+                                                if (!item) return null;
+                                                return (
+                                                    <text
+                                                        x={x + width + 5}
+                                                        y={y + height / 2}
+                                                        fill={darkMode ? '#60a5fa' : '#2563eb'}
+                                                        fontSize={12}
+                                                        fontWeight="bold"
+                                                        textAnchor="start"
+                                                        dominantBaseline="middle"
+                                                    >
+                                                        {item.percentage}%
+                                                    </text>
+                                                );
+                                            }}
+                                        >
+                                            {geographicData.countries.map((entry, index) => (
+                                                <Cell
+                                                    key={`cell-${index}`}
+                                                    fill={
+                                                        index === 0 ? 'url(#colorGradient1)' :
+                                                            index === 1 ? 'url(#colorGradient2)' :
+                                                                index === 2 ? 'url(#colorGradient3)' :
+                                                                    'url(#colorGradientDefault)'
+                                                    }
+                                                />
+                                            ))}
+                                        </Bar>
+                                    </BarChart>
+                                </ResponsiveContainer>
+                            </div>
+                        </div>
                     </div>
                 </div>
             ) : activeTab === 'monthly' ? (
@@ -2447,6 +2884,96 @@ export default function Dashboard() {
                             </div>
                         </div>
                     </div>
+
+                    {/* Daily KPI Health Trend Graph */}
+                    <div className={clsx("mt-12 mb-10 overflow-hidden rounded-2xl border shadow-xl p-6", cardClass)}>
+                        <div className="flex items-center justify-between mb-8">
+                            <div>
+                                <h3 className="text-lg font-bold">KPI Health Trend</h3>
+                                <p className={clsx("text-xs opacity-50", textMuted)}>Status Counts Over Time</p>
+                            </div>
+                            <div className="flex items-center gap-6">
+                                {/* View Toggle */}
+                                <div className={clsx("flex items-center gap-2 p-1 rounded-lg border", darkMode ? "border-white/10 bg-white/5" : "border-gray-200 bg-gray-50")}>
+                                    <button
+                                        onClick={() => setDailyTrendView('daily')}
+                                        className={clsx(
+                                            "px-3 py-1.5 rounded text-xs font-bold uppercase tracking-wider transition-all",
+                                            dailyTrendView === 'daily'
+                                                ? (darkMode ? "bg-blue-600 text-white" : "bg-blue-500 text-white shadow")
+                                                : "text-gray-500 hover:text-gray-700"
+                                        )}
+                                    >
+                                        Daily
+                                    </button>
+                                    <button
+                                        onClick={() => setDailyTrendView('cumulative')}
+                                        className={clsx(
+                                            "px-3 py-1.5 rounded text-xs font-bold uppercase tracking-wider transition-all",
+                                            dailyTrendView === 'cumulative'
+                                                ? (darkMode ? "bg-blue-600 text-white" : "bg-blue-500 text-white shadow")
+                                                : "text-gray-500 hover:text-gray-700"
+                                        )}
+                                    >
+                                        Cumulative
+                                    </button>
+                                </div>
+                                {/* Legend */}
+                                <div className="flex gap-4">
+                                    <div className="flex items-center gap-1.5">
+                                        <div className="w-3 h-3 rounded-full bg-red-500"></div>
+                                        <span className="text-[10px] font-bold uppercase opacity-60">Critical</span>
+                                    </div>
+                                    <div className="flex items-center gap-1.5">
+                                        <div className="w-3 h-3 rounded-full bg-orange-500"></div>
+                                        <span className="text-[10px] font-bold uppercase opacity-60">Low</span>
+                                    </div>
+                                    <div className="flex items-center gap-1.5">
+                                        <div className="w-3 h-3 rounded-full bg-green-500"></div>
+                                        <span className="text-[10px] font-bold uppercase opacity-60">On Track</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div className="h-[350px] w-full">
+                            <ResponsiveContainer width="100%" height="100%">
+                                <AreaChart data={dailyKpiTrendData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+                                    <defs>
+                                        <linearGradient id="dailyColorOnTrack" x1="0" y1="0" x2="0" y2="1">
+                                            <stop offset="5%" stopColor="#22c55e" stopOpacity={0.15} />
+                                            <stop offset="95%" stopColor="#22c55e" stopOpacity={0} />
+                                        </linearGradient>
+                                        <linearGradient id="dailyColorLow" x1="0" y1="0" x2="0" y2="1">
+                                            <stop offset="5%" stopColor="#f97316" stopOpacity={0.15} />
+                                            <stop offset="95%" stopColor="#f97316" stopOpacity={0} />
+                                        </linearGradient>
+                                        <linearGradient id="dailyColorCritical" x1="0" y1="0" x2="0" y2="1">
+                                            <stop offset="5%" stopColor="#ef4444" stopOpacity={0.15} />
+                                            <stop offset="95%" stopColor="#ef4444" stopOpacity={0} />
+                                        </linearGradient>
+                                    </defs>
+                                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={darkMode ? "rgba(255,255,255,0.05)" : "rgba(0,0,0,0.05)"} />
+                                    <XAxis
+                                        dataKey="date"
+                                        axisLine={false}
+                                        tickLine={false}
+                                        tick={{ fontSize: 10, fill: darkMode ? '#888' : '#666' }}
+                                        dy={10}
+                                    />
+                                    <YAxis
+                                        axisLine={false}
+                                        tickLine={false}
+                                        tick={{ fontSize: 10, fill: darkMode ? '#888' : '#666' }}
+                                    />
+                                    <Tooltip content={<CustomKpiTooltip darkMode={darkMode} />} />
+                                    <Area type="monotone" dataKey="onTrack" name="On Track" stroke="#22c55e" strokeWidth={3} fillOpacity={1} fill="url(#dailyColorOnTrack)" />
+                                    <Area type="monotone" dataKey="low" name="Low" stroke="#f97316" strokeWidth={3} fillOpacity={1} fill="url(#dailyColorLow)" />
+                                    <Area type="monotone" dataKey="critical" name="Critical" stroke="#ef4444" strokeWidth={3} fillOpacity={1} fill="url(#dailyColorCritical)" />
+                                </AreaChart>
+                            </ResponsiveContainer>
+                        </div>
+                    </div>
                 </div>
             ) : activeTab === 'portfolio' ? (
                 <div className="animate-in fade-in slide-in-from-bottom-4 duration-700 flex flex-col gap-8">
@@ -2518,7 +3045,7 @@ export default function Dashboard() {
                             showTrend={false}
                         />
                         <StatCard
-                            label="Total Actual Spent"
+                            label="Total Actual Spent (USD)"
                             value={formatPriceRounded(portfolioStats.reduce((acc, s) => acc + s.totalCost, 0))}
                             subValue={portfolioFilterMonth.length > 1 ? `Avg Spend (${portfolioFilterMonth.length}m)` : <i>({portfolioFilterMonth[0] || monthOptions[monthOptions.length - 1]})</i>}
                             icon={Layers}
@@ -2535,15 +3062,7 @@ export default function Dashboard() {
                             darkMode={darkMode}
                             showTrend={false}
                         />
-                        <StatCard
-                            label="High Intensity PM"
-                            value={portfolioStats.sort((a, b) => b.workloadIntensity - a.workloadIntensity)[0]?.pm || '-'}
-                            subValue={portfolioFilterMonth.length > 1 ? `Peak Intensity Avg` : <i>({portfolioFilterMonth[0] || monthOptions[monthOptions.length - 1]})</i>}
-                            icon={AlertTriangle}
-                            color="orange"
-                            darkMode={darkMode}
-                            showTrend={false}
-                        />
+
                     </div>
 
                     {/* Health Evolution Trend Chart */}
@@ -2700,7 +3219,7 @@ export default function Dashboard() {
                                                             <div className="space-y-1">
                                                                 <p className="text-[10px] font-bold opacity-50 uppercase">Accounts: <span className="text-white opacity-100">{data.accounts}</span></p>
                                                                 <p className="text-[10px] font-bold opacity-50 uppercase">Performance: <span className="text-green-400 opacity-100">{data.onTrackPct.toFixed(0)}%</span></p>
-                                                                <p className="text-[10px] font-bold opacity-50 uppercase">Actual Spend: <span className="text-purple-400 opacity-100">${formatPriceRounded(data.totalCost)}</span></p>
+                                                                <p className="text-[10px] font-bold opacity-50 uppercase">Actual Spend (USD): <span className="text-purple-400 opacity-100">${formatPriceRounded(data.totalCost)}</span></p>
                                                             </div>
                                                         </div>
                                                     );
@@ -2792,7 +3311,7 @@ export default function Dashboard() {
                                 columns={[
                                     { header: 'Manager', key: 'pm' },
                                     { header: 'Accounts', key: 'accounts' },
-                                    { header: 'Monthly Ad Spend', key: 'totalCost' },
+                                    { header: 'Monthly Ad Spend (USD)', key: 'totalCost' },
                                     { header: 'Health Score', key: 'healthScore' },
                                     { header: 'Global Score', key: 'globalScore' },
                                 ]}
@@ -2807,7 +3326,7 @@ export default function Dashboard() {
                                         <th className="p-4 pl-8">#</th>
                                         <th className="p-4">Manager</th>
                                         <th className="p-4 text-center">Accounts</th>
-                                        <th className="p-4 text-center">Monthly Ad Spend</th>
+                                        <th className="p-4 text-center">Monthly Ad Spend (USD)</th>
                                         <th className="p-4 text-center">Health Score</th>
                                         <th className="p-4 text-center">Global Score</th>
                                         <th className="p-4 text-center">Capacity</th>
@@ -2815,18 +3334,15 @@ export default function Dashboard() {
                                     </tr>
                                 </thead>
                                 <tbody className={clsx("divide-y", darkMode ? "divide-white/5" : "divide-gray-100")}>
-                                    {portfolioStats.map((s, idx) => (
+                                    {portfolioStats.sort((a, b) => b.totalCost - a.totalCost).map((s, idx) => (
                                         <tr key={idx} className={clsx("group transition-colors", trHover)}>
-                                            <td className="p-4 pl-8 opacity-30 font-mono text-xs">{idx + 1}</td>
-                                            <td className="p-4">
-                                                <div className="flex flex-col">
-                                                    <span className="font-black text-sm">{s.pm}</span>
-                                                    <span className="text-[10px] opacity-40 font-bold uppercase tracking-tighter">Strategic Lead</span>
-                                                </div>
+                                            <td className="p-2 pl-8 opacity-30 font-mono text-xs">{idx + 1}</td>
+                                            <td className="p-2 pl-8">
+                                                <span className="font-black text-sm">{s.pm}</span>
                                             </td>
-                                            <td className="p-4 text-center font-black text-blue-400">{s.accounts}</td>
-                                            <td className="p-4 text-center font-mono font-bold text-purple-400">${formatPriceRounded(s.totalCost)}</td>
-                                            <td className="p-4 text-center">
+                                            <td className="p-2 text-center font-black text-blue-400">{s.accounts}</td>
+                                            <td className="p-2 text-center font-mono font-bold text-purple-400">${formatPriceRounded(s.totalCost)}</td>
+                                            <td className="p-2 text-center">
                                                 <div className="flex items-center flex-col gap-1">
                                                     <span className={clsx("text-xs font-black", s.avgHealth > 80 ? "text-green-400" : s.avgHealth > 60 ? "text-orange-400" : "text-red-400")}>
                                                         {s.avgHealth.toFixed(1)}%
@@ -2836,7 +3352,7 @@ export default function Dashboard() {
                                                     </div>
                                                 </div>
                                             </td>
-                                            <td className="p-4 text-center">
+                                            <td className="p-2 text-center">
                                                 <div className="flex items-center flex-col gap-1">
                                                     <span className={clsx("text-xs font-black", s.globalScore > 80 ? "text-green-400" : s.globalScore > 60 ? "text-orange-400" : "text-red-400")}>
                                                         {s.globalScore.toFixed(1)}
@@ -2846,7 +3362,7 @@ export default function Dashboard() {
                                                     </div>
                                                 </div>
                                             </td>
-                                            <td className="p-4 text-center">
+                                            <td className="p-2 text-center">
                                                 <span className={clsx(
                                                     "px-3 py-1 rounded-lg text-[10px] font-black tracking-tight",
                                                     s.workloadIntensity > 35 ? "bg-red-500/10 text-red-400 border border-red-500/10" :
@@ -2856,7 +3372,7 @@ export default function Dashboard() {
                                                     {s.workloadIntensity.toFixed(0)}
                                                 </span>
                                             </td>
-                                            <td className="p-4 pr-8 text-center">
+                                            <td className="p-2 pr-8 text-center">
                                                 <div className="flex items-end justify-center gap-1 h-8">
                                                     {s.trend.map((val: number, i: number) => (
                                                         <div
@@ -3499,13 +4015,52 @@ export default function Dashboard() {
                             </div>
                         </div>
                     )}
+
+                    {/* Scorecards */}
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+                        <StatCard
+                            label="Budget Exhaustions"
+                            value={budgetStats.exhaustions}
+                            icon={AlertTriangle}
+                            color="red"
+                            darkMode={darkMode}
+                            showTrend={false}
+                        />
+                        <StatCard
+                            label="Accounts Affected"
+                            value={budgetStats.accounts}
+                            icon={Target}
+                            color="orange"
+                            darkMode={darkMode}
+                            showTrend={false}
+                        />
+                        <StatCard
+                            label="PMs Affected"
+                            value={budgetStats.pms}
+                            icon={User}
+                            color="purple"
+                            darkMode={darkMode}
+                            showTrend={false}
+                        />
+                    </div>
                     {/* REST OF BUDGET VIEW... */}
 
                     {/* Budget Summary Table (By PM) */}
                     {budgetData.length > 0 && (
-                        <div className={clsx("mb-8 overflow-hidden rounded-xl border shadow-lg", cardClass)}>
-                            <div className={clsx("p-4 border-b text-sm font-bold uppercase tracking-wider", darkMode ? "border-white/10 bg-white/5" : "border-gray-200 bg-gray-50 text-gray-700")}>
-                                PM Overview
+                        <div className={clsx("overflow-hidden rounded-xl border shadow-lg", cardClass)}>
+                            <div className={clsx("p-4 border-b flex items-center justify-between", darkMode ? "border-white/10 bg-white/5" : "border-gray-200 bg-gray-50")}>
+                                <span className={clsx("text-sm font-bold uppercase tracking-wider", darkMode ? "text-gray-300" : "text-gray-700")}>PM Overview</span>
+                                <ExportButton
+                                    filename="budget-pm-overview"
+                                    title="Budget Tracker - PM Overview"
+                                    columns={[
+                                        { header: 'PM', key: 'pm' },
+                                        { header: 'Total Exhaustions', key: 'exhaustions' },
+                                        { header: 'Total Accounts', key: 'distinctAccounts' },
+                                    ]}
+                                    data={pmSummaryStats}
+                                    darkMode={darkMode}
+                                />
                             </div>
                             <div className="overflow-x-auto overflow-y-auto">
                                 <table className="w-full text-left">
@@ -3528,56 +4083,73 @@ export default function Dashboard() {
                                 </table>
                             </div>
                         </div>
-                    )}
-
-                    <div className={clsx("overflow-x-auto rounded-2xl border shadow-2xl relative z-10", darkMode ? "border-white/10" : "border-gray-200")}>
-                        <table className="w-full text-left border-collapse">
-                            <thead>
-                                <tr className={clsx("text-xs uppercase tracking-wider font-bold", darkMode ? "bg-white/10 text-gray-300" : "bg-gray-100 text-gray-600")}>
-                                    <th className="p-3 text-center whitespace-nowrap">CID</th>
-                                    <th className="p-3 text-center whitespace-nowrap">Account Name</th>
-                                    <th className="p-3 text-center whitespace-nowrap">Budget</th>
-                                    <th className="p-3 text-center whitespace-nowrap">Amount Spent</th>
-                                    <th className="p-3 text-center whitespace-nowrap">% Spent</th>
-                                    <th className="p-3 text-center whitespace-nowrap">PM</th>
-                                </tr>
-                            </thead>
-                            <tbody className={clsx("divide-y backdrop-blur-sm text-xs", darkMode ? "bg-white/5 divide-white/5" : "bg-white divide-gray-100")}>
-                                {filteredBudgetData.length === 0 ? (
-                                    <tr>
-                                        <td colSpan={6} className={clsx("p-8 text-center", textMuted)}>
-                                            {budgetData.length === 0 ? "No budget data found." : "No matching records found."}
-                                        </td>
+                    )}\n\n                    {/* Budget Exhaustion Details */}\n                    <div className={clsx("overflow-hidden rounded-2xl border shadow-2xl relative z-10", darkMode ? "border-white/10" : "border-gray-200")}>
+                        <div className={clsx("p-4 border-b flex items-center justify-between", darkMode ? "border-white/10 bg-white/5" : "border-gray-200 bg-gray-50")}>
+                            <span className={clsx("text-sm font-bold uppercase tracking-wider", darkMode ? "text-gray-300" : "text-gray-700")}>Budget Exhaustion Details</span>
+                            <ExportButton
+                                filename="budget-exhaustion-details"
+                                title="Budget Tracker - Exhaustion Details"
+                                columns={[
+                                    { header: 'CID', key: 'cid' },
+                                    { header: 'Account Name', key: 'accountName' },
+                                    { header: 'Budget', key: 'budget' },
+                                    { header: 'Amount Spent', key: 'amountSpent' },
+                                    { header: '% Spent', key: 'percentSpent' },
+                                    { header: 'PM', key: 'pm' },
+                                ]}
+                                data={filteredBudgetData}
+                                darkMode={darkMode}
+                            />
+                        </div>
+                        <div className="overflow-x-auto">
+                            <table className="w-full text-left border-collapse">
+                                <thead>
+                                    <tr className={clsx("text-xs uppercase tracking-wider font-bold", darkMode ? "bg-white/10 text-gray-300" : "bg-gray-100 text-gray-600")}>
+                                        <th className="p-3 text-center whitespace-nowrap">CID</th>
+                                        <th className="p-3 text-center whitespace-nowrap">Account Name</th>
+                                        <th className="p-3 text-center whitespace-nowrap">Budget</th>
+                                        <th className="p-3 text-center whitespace-nowrap">Amount Spent</th>
+                                        <th className="p-3 text-center whitespace-nowrap">% Spent</th>
+                                        <th className="p-3 text-center whitespace-nowrap">PM</th>
                                     </tr>
-                                ) : (
-                                    filteredBudgetData.map((row, idx) => {
-                                        const pct = parseFloat(row.percentSpent.replace('%', ''));
-                                        const bVal = parseCurrency(row.budgetAmount);
-                                        const sVal = parseCurrency(row.amountSpent);
+                                </thead>
+                                <tbody className={clsx("divide-y backdrop-blur-sm text-xs", darkMode ? "bg-white/5 divide-white/5" : "bg-white divide-gray-100")}>
+                                    {filteredBudgetData.length === 0 ? (
+                                        <tr>
+                                            <td colSpan={6} className={clsx("p-8 text-center", textMuted)}>
+                                                {budgetData.length === 0 ? "No budget data found." : "No matching records found."}
+                                            </td>
+                                        </tr>
+                                    ) : (
+                                        filteredBudgetData.map((row, idx) => {
+                                            const pct = parseFloat(row.percentSpent.replace('%', ''));
+                                            const bVal = parseCurrency(row.budgetAmount);
+                                            const sVal = parseCurrency(row.amountSpent);
 
-                                        return (
-                                            <tr key={idx} className={clsx("transition-colors group", trHover)}>
-                                                <td className="p-3 text-center font-mono text-xs">{row.cid}</td>
-                                                <td className="p-3 text-center font-medium">{row.accountName}</td>
-                                                <td className="p-3 text-center font-mono">{formatCurrency(bVal, row.currency)}</td>
-                                                <td className="p-3 text-center font-mono">{formatCurrency(sVal, row.currency)}</td>
-                                                <td className="p-3 text-center">
-                                                    <span className={clsx("px-2 py-0.5 rounded-full font-bold",
-                                                        pct >= 100 ? "bg-red-500/20 text-red-500" :
-                                                            pct >= 90 ? "bg-orange-500/20 text-orange-500" :
-                                                                pct >= 75 ? "bg-yellow-500/20 text-yellow-500" :
-                                                                    "bg-green-500/20 text-green-500"
-                                                    )}>
-                                                        {row.percentSpent}
-                                                    </span>
-                                                </td>
-                                                <td className="p-3 text-center">{row.pm}</td>
-                                            </tr>
-                                        );
-                                    })
-                                )}
-                            </tbody>
-                        </table>
+                                            return (
+                                                <tr key={idx} className={clsx("transition-colors group", trHover)}>
+                                                    <td className="p-3 text-center font-mono text-xs">{row.cid}</td>
+                                                    <td className="p-3 text-center font-medium">{row.accountName}</td>
+                                                    <td className="p-3 text-center font-mono">{formatCurrency(bVal, row.currency)}</td>
+                                                    <td className="p-3 text-center font-mono">{formatCurrency(sVal, row.currency)}</td>
+                                                    <td className="p-3 text-center">
+                                                        <span className={clsx("px-2 py-0.5 rounded-full font-bold",
+                                                            pct >= 100 ? "bg-red-500/20 text-red-500" :
+                                                                pct >= 90 ? "bg-orange-500/20 text-orange-500" :
+                                                                    pct >= 75 ? "bg-yellow-500/20 text-yellow-500" :
+                                                                        "bg-green-500/20 text-green-500"
+                                                        )}>
+                                                            {row.percentSpent}
+                                                        </span>
+                                                    </td>
+                                                    <td className="p-3 text-center">{row.pm}</td>
+                                                </tr>
+                                            );
+                                        })
+                                    )}
+                                </tbody>
+                            </table>
+                        </div>
                     </div>
 
                     {/* Historical Heatmap */}

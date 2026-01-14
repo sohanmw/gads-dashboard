@@ -76,3 +76,8 @@ export const MOCK_MANAGEMENT_DATA: ManagementData[] = [
         country: 'UK'
     }
 ];
+
+export interface PMCIDData {
+    accountName: string;
+    currency: string;
+}
